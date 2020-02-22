@@ -1,0 +1,21 @@
+# Top-most EditorConfig file
+root = true
+
+# Perl files
+[*.{pl,pm,t,PL}]
+charset = utf-8
+end_of_line = lf
+max_line_length = off
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# HTML files
+[*.{css,html,js,json,jsx,scss,ts,tsx,yaml,yml,sql}]
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+end_of_line = lf
+charset = utf-8
