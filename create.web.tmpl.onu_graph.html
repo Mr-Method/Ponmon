@@ -1,0 +1,150 @@
+#<ACTION> file=>'web/tmpl/onu_graph.html',hook=>'new'
+<style type='text/css'>
+<!--
+.graph_slider {
+    display: inline-block;
+}
+.graph_slider a {
+    display: inline-block;
+    background-color: #c0c0c0;
+    width: 10pt;
+    height: 10pt;
+    margin: 1px;
+}
+.graph_slider a.active {
+    background-color: #90a0b0;
+}
+.graph_slider a:hover {
+    background-color: #90a0b0;
+}
+#graph {
+    margin: 0 auto;
+}
+-->
+</style>
+
+<div id='graph'></div>
+<script type='text/javascript'>
+$(document).ready(function()
+{
+  $.getScript('{{cfg::img_dir}}/js/highcharts.js', function(){
+
+    Highcharts.setOptions({
+        global: {
+            useUTC : false
+        },
+        lang: {
+            shortMonths: [{{months}}],
+            loading: 'Загрузка...',
+            months: ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'],
+            weekdays: ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'],
+            //shortMonths: ['Янв', 'Фев', 'Март', 'Апр', 'Май', 'Июнь', 'Июль', 'Авг', 'Сент', 'Окт', 'Нояб', 'Дек'],
+        }
+    });
+
+    var container = $('#graph');
+
+    var chart = new Highcharts.Chart({
+        chart: {
+            type: 'spline',
+            renderTo: 'graph',
+            zoomType: 'x',
+            spacingRight: 10
+        },
+        title: {
+            text: "{{title}}",
+            useHTML: true
+        },
+        xAxis: {
+            /*crosshair: true,
+            categories: [1556967434, 1557967434, 1576967434, 1556967434, 1557967434, 1576967434, 1556967434, 1557967434, 1576967434, 1556967434, 1557967434, 1576967434],
+            type: 'datetime',
+            gridLineWidth: 1*/
+            title: {
+                text: 'Время',
+            },
+            labels: {
+                {% if type %}
+                formatter: function() {
+                        return Highcharts.dateFormat('%e. %b', this.value);
+                },
+                {% else %}
+                formatter: function() {
+                        return Highcharts.dateFormat('%e-%b-\'%y<br>%H:%M', this.value);
+                },
+                {% endif %}
+            },
+
+            type: 'datetime',
+            gridLineWidth: 1,
+        },
+        yAxis: {
+            //title: false,
+            /*{
+                text: '{{y_title}}'
+            },
+            min: '{{y_min}}',*/
+            startOnTick: true,
+            showFirstLabel: false,
+        },
+        tooltip: {
+            enabled: true,
+            shared: true,
+            useHTML: true,
+            //headerFormat: '',
+            valueDecimals: 2,
+            valueSuffix: ' dBi',
+        },
+        plotOptions: {
+            spline: {
+                lineWidth: 1,
+                marker: {
+                    enabled: false,
+                },
+                shadow: false,
+            },
+            line: {
+                lineWidth: 2,
+                marker: {
+                    enabled: false,
+                },
+                shadow: false,
+            },
+            column: {
+                borderWidth: 3,
+            },
+
+        },
+        //legend: false,
+        series: [
+            {% for s in series %} {
+                type: {% if type %}'area'{% else %}'spline'{% endif %},
+                name: '{{s.name}}',
+                color: '{{s.color}}',
+               // pointInterval: 3600 * 1000, // Hour
+                data: [
+                 {% for point in s.points %} [ {{point.x}}, {{point.y}} ], {% endfor %}
+                ],
+            },{% endfor %}
+        ],
+
+});
+
+    $('.graph_slider').each( function(){
+        var height = 4;
+        $(this).find('a').each( function(){
+            $(this).css({height:height});
+            height += 1;
+        });
+    });
+
+    var buttons = $('#graph_buttons');
+    var origChartWidth  = container.width();
+    var origChartHeight = container.height();
+    var expires = new Date();
+    expires.setTime(expires.getTime() + (1000 * 86400 * 365));
+    document.cookie = 'graph_rough=' + escape('{{rough}}') + '; expires=' + expires.toGMTString() + '; path=/';
+  });
+});
+
+</script>

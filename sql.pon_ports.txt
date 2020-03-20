@@ -1,0 +1,17 @@
+CREATE TABLE IF NOT EXISTS `pon_ports` (
+  `id` smallint(5) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `olt_id` smallint(11) NOT NULL,
+  `name` varchar(30) NOT NULL DEFAULT 'new olt',
+  `p_index` varchar(30) NOT NULL,
+  `type` varchar(30) NOT NULL DEFAULT '',
+  `shelf` tinyint(2) NOT NULL DEFAULT '0',
+  `slot` tinyint(2) NOT NULL DEFAULT '0',
+  `port` tinyint(2) NOT NULL DEFAULT '0',
+  `tx` varchar(10) NOT NULL DEFAULT '',
+  `descr` varchar(250) NOT NULL DEFAULT '',
+  `status` tinyint(1) NOT NULL DEFAULT '9',
+  `enable` tinyint(1) NOT NULL DEFAULT '0',
+  `changed` int(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `olt_id` (`olt_id`,`p_index`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='OLT ports';

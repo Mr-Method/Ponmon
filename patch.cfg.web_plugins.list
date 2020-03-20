@@ -1,0 +1,5 @@
+#<ACTION> file=>'cfg/web_plugins.list',hook=>'admin'
+
+ponmon          0       ponmon          PONMON
+ajOnuMenu       1       ajOnuMenu       ONU Двойной клик по карте
+ajOnuGraph      1       ajOnuGraph      ONU Получение объектов для карты

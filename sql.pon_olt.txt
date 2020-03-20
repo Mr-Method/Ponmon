@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS `pon_olt` (
+  `id` smallint(5) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `name` varchar(30) NOT NULL DEFAULT 'new olt',
+  `ip` varchar(15) NOT NULL,
+  `snmp_port` smallint(6) NOT NULL DEFAULT '0',
+  `vendor` varchar(20) NOT NULL DEFAULT '',
+  `model` varchar(20) NOT NULL DEFAULT '',
+  `firmware` varchar(17) NOT NULL DEFAULT '',
+  `ro_comunity` varchar(32) NOT NULL DEFAULT '',
+  `rw_comunity` varchar(32) NOT NULL DEFAULT '',
+  `mng_type` varchar(28) NOT NULL DEFAULT '',
+  `mng_user` varchar(20) NOT NULL DEFAULT '',
+  `mng_pswd` varchar(20) NOT NULL DEFAULT '',
+  `descr` varchar(250) NOT NULL DEFAULT '',
+  `status` tinyint(1) NOT NULL DEFAULT '9',
+  `enable` tinyint(1) NOT NULL DEFAULT '0',
+  `changed` int(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `nas_identifier` (`ip`,`model`),
+  KEY `mac` (`firmware`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='OLT list';
