@@ -20,22 +20,26 @@ my $new = {
     menu_list   => L('Всі OLT'),
 };
 
-my %mng_type = {
-    1        => 'ssh',
-    2        => 'telnet',
-};
-
-
-my $Dictionary;
-
 sub o_start
 {
-    main::Require_web_mod('Data') && die;
-    $Dictionary = Data->dictionary;
-    # exists $Dictionary->{oltvendor} or ToTop( url->a(
-    #    'Создайте объект oltvendor',
-    #    a=>'op', op=>'new', act=>'dictionary', type=>'oltvendor',
-    # ));
+    my %Modules = ();
+    $new->{_vendors} = \%Modules;
+
+    opendir(my $dh, $cfg::dir_home.'/nod/Pon') or
+        Error_Lang(
+            'Не могу прочитать каталог: [filtr|p]Если существует - проверьте права доступа.',
+            $cfg::dir_home.'/nod/Pon'
+        );
+
+    # В 2 этапа, поскольку нужно исключить основные файлы, если у них есть фантомы
+    while( my $module = readdir($dh) )
+    {
+        $module =~ s/^_?(.+)\.pm$/$1/ or next;
+        $Modules{$module} = {};
+    }
+    closedir $dh;
+    keys %Modules or Error_Lang('Нет ни одного модуля вендора (файла *.pm) в каталоге: [filtr|p]', $cfg::dir_home.'/nod/Pon');
+
     return $new;
 }
 
@@ -52,8 +56,6 @@ sub o_list
 
     my $db = Db->sql("SELECT * FROM pon_olt $sql_where ORDER BY id", @sql_param);
 
-    my %type = @{$Dictionary->{placetype} || []};
-
     while( my %p = $db->line )
     {
         my $id = $p{id};
@@ -62,6 +64,7 @@ sub o_list
             [ 'h_right',    'id',            $id ],
             # [ 'h_center',   L('Сортировка'), $sort ],
             [ '',           L('Имя'),               $p{name} ],
+            [ '',           L('Тип'),               $p{pon_type} ],
             [ '',           L('Вендор'),            $p{vendor} ],
             [ '',           L('Model'),             $p{model} ],
             [ '',           L('IP Адрес'),          $p{ip} ],
@@ -90,44 +93,67 @@ sub o_show
     my @menu = ();
     my $tbl = tbl->new( -class=>'td_ok pretty wide_input' );
 
+    Doc->template('top_block')->{urls} .= ' '.url->a('help', a=>'help', theme=>'pon_mng',);
 
-    if( exists $Dictionary->{oltvendor} )
+    my @vendorlist = ();
+    foreach my $key (sort keys %{$d->{_vendors}})
     {
-        my %type = @{$Dictionary->{oltvendor}};
-        map{ $_ = $_->{v} } values %type;
-        $type{''} = '';
-        my $type_list = v::select(
-            name     => 'oltvendor',
-            size     => 1,
-            options  => \%type,
-            selected => $d->{d}{oltvendor},
-        );
-        $tbl->add('','ll', [ $type_list ], L('oltvendor'));
+        push @vendorlist, $key, $key;
     }
 
-    my $mngtype = v::select(
-        name     => 'mng_type',
+    my $vendors = v::select(
+        name     => 'vendor',
         size     => 1,
-        options  => \%mng_type,
-        selected => $d->{d}{mng_type},
+        options  => \@vendorlist,
+        selected => $d->{d}{vendor},
     );
 
+    my @pon_types = (
+        'epon','epon',
+        'gpon','gpon',
 
-    $tbl->add('', 'll', [ v::input_t(name=>'name', value=>$d->{d}{name}) ],					L('name'), );
-    $tbl->add('', 'll', [ v::input_t(name=>'vendor', value=>$d->{d}{vendor}) ],				L('vendor'), );
-    $tbl->add('', 'll', [ v::input_t(name=>'model', value=>$d->{d}{model}) ],					L('model'), );
-    $tbl->add('', 'll', [ v::input_t(name=>'firmware', value=>$d->{d}{firmware}) ],			L('firmware'), );
+#<HOOK>pon_types
 
-    $tbl->add('', 'll', [ v::input_t(name=>'ip', value=>$d->{d}{ip}) ],						L('IP'), );
-    $tbl->add('', 'll', [ v::input_t(name=>'snmp_port', value=>$d->{d}{snmp_port}) ],          L('SNMP Port'), ) if Adm->chk_privil('SuperAdmin');
-    $tbl->add('', 'll', [ v::input_t(name=>'ro_comunity', value=>$d->{d}{ro_comunity}) ],      L('ro_comunity'), ) if Adm->chk_privil('SuperAdmin');
-    $tbl->add('', 'll', [ v::input_t(name=>'rw_comunity', value=>$d->{d}{rw_comunity}) ],      L('rw_comunity'), ) if Adm->chk_privil('SuperAdmin');
+    );
 
-    # $tbl->add('','ll',  [ $mngtype ],        L('mng_type'), ) if Adm->chk_privil('SuperAdmin');
-    $tbl->add('', 'll', [ v::input_t(name=>'mng_user', value=>$d->{d}{mng_user}) ],			L('mng_user'), ) if Adm->chk_privil('SuperAdmin');
-    $tbl->add('', 'll', [ v::input_t(name=>'mng_pswd', value=>$d->{d}{mng_pswd}) ],			L('mng_pswd'), ) if Adm->chk_privil('SuperAdmin');
-    $tbl->add('', 'll', [ v::input_ta('descr', $d->{d}{descr}, 36, 6) ],						L('Комментар'), );
-    $tbl->add('', 'rl', [ v::checkbox( name=>'enable', value=>1, checked=>$d->{d}{enable}) ],	L('Увімкнути'), );
+    my $pontype = v::select(
+        name     => 'pon_type',
+        #size     => 1,
+        options  => \@pon_types,
+        selected => $d->{d}{pon_type},
+    );
+
+    my @documents =(0,'');
+    {
+        my $db = Db->sql("SELECT * FROM documents WHERE is_section=0 AND tags LIKE '%,system,%' AND tags LIKE '%,pon_tmpl,%' ORDER BY name ASC");
+        Db->rows or ToTop( L('У Вас нет шаблонов управления, обратитесь к странице "help"'));
+        while( my %p = $db->line )
+        {
+            push @documents, $p{id}, $p{name};
+        }
+    }
+
+    my $mng_tmpl = v::select(
+        name     => 'mng_tmpl',
+        size     => 1,
+        options  => \@documents,
+        selected => $d->{d}{mng_tmpl},
+    );
+
+    $tbl->add('', 'll', [ v::input_t(name=>'name', value=>$d->{d}{name}) ],                     L('name'), );
+    $tbl->add('', 'll', [ $vendors ],                                                           L('vendor'), );
+    $tbl->add('', 'll', [ v::input_t(name=>'model', value=>$d->{d}{model}) ],                   L('model'), );
+    $tbl->add('', 'll', [ v::input_t(name=>'firmware', value=>$d->{d}{firmware}) ],             L('firmware'), );
+
+    $tbl->add('', 'll', [ v::input_t(name=>'ip', value=>$d->{d}{ip}) ],                         L('IP'), );
+    $tbl->add('', 'll', [ v::input_t(name=>'snmp_port', value=>$d->{d}{snmp_port}) ],           L('SNMP Port'), ) if Adm->chk_privil('SuperAdmin');
+    $tbl->add('', 'll', [ v::input_t(name=>'ro_comunity', value=>$d->{d}{ro_comunity}) ],       L('ro_comunity'), ) if Adm->chk_privil('SuperAdmin');
+    $tbl->add('', 'll', [ v::input_t(name=>'rw_comunity', value=>$d->{d}{rw_comunity}) ],       L('rw_comunity'), ) if Adm->chk_privil('SuperAdmin');
+
+    $tbl->add('','ll',  [ $pontype ],                                                           L('pon_type'), ) if Adm->chk_privil('SuperAdmin');
+    $tbl->add('', 'll', [ $mng_tmpl ],                                                          L('Management template'), ) if Adm->chk_privil('SuperAdmin');
+    $tbl->add('', 'll', [ v::input_ta('descr', $d->{d}{descr}, 36, 6) ],                        L('Комментар'), );
+    $tbl->add('', 'rl', [ v::checkbox( name=>'enable', value=>1, checked=>$d->{d}{enable}) ],   L('Увімкнути'), );
 
     if( $d->chk_priv('priv_edit') )
     {
@@ -144,7 +170,7 @@ sub o_update
 {
     my($d) = @_;
 
-    $d->{sql} .= 'SET name=?, vendor=?, model=?, firmware=?, ip=?, snmp_port=?, ro_comunity=?, rw_comunity=?, mng_user=?, mng_pswd=?, descr=?, enable=?, changed=UNIX_TIMESTAMP()';
+    $d->{sql} .= 'SET name=?, vendor=?, model=?, firmware=?, ip=?, snmp_port=?, ro_comunity=?, rw_comunity=?, pon_type=?, mng_tmpl=?, descr=?, enable=?, changed=UNIX_TIMESTAMP()';
 
     push @{$d->{param}}, v::trim(ses::input('name'));
     push @{$d->{param}}, ses::input('vendor');
@@ -152,16 +178,15 @@ sub o_update
     push @{$d->{param}}, ses::input('firmware');
 
     push @{$d->{param}}, v::trim(ses::input('ip'));
-    push @{$d->{param}}, ses::input('snmp_port') + 0;
+    push @{$d->{param}}, ses::input_int('snmp_port');
     push @{$d->{param}}, ses::input('ro_comunity');
     push @{$d->{param}}, ses::input('rw_comunity');
 
-    #push @{$d->{param}}, ses::input('mng_type');
-    push @{$d->{param}}, ses::input('mng_user');
-    push @{$d->{param}}, ses::input('mng_pswd');
+    push @{$d->{param}}, ses::input('pon_type');
+    push @{$d->{param}}, ses::input_int('mng_tmpl');
 
     push @{$d->{param}}, v::trim(ses::input('descr'));
-    push @{$d->{param}}, ses::input('enable') + 0;
+    push @{$d->{param}}, ses::input_int('enable');
 }
 
 sub o_insert

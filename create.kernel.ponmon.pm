@@ -60,7 +60,10 @@ sub main
 {
     my($task, $single, $config) = @_;
     my @threads = ();
-    my $db = Db->sql("SELECT * FROM `pon_olt` WHERE `enable` = 1");
+    my $db = Db->sql(
+        "SELECT o.*, d.name as tname, d.document, d.tags FROM `pon_olt` o ".
+        "LEFT JOIN documents d ON (d.id = o.`mng_tmpl`) WHERE o.`enable` = 1"
+    );
     my $rows = $db->rows || 0;
     if (!$rows) {
         debug "===> ERROR: No OLT in DB!!!";
