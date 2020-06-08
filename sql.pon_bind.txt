@@ -8,9 +8,9 @@ CREATE TABLE IF NOT EXISTS `pon_bind` (
   `place` int(10) NOT NULL DEFAULT '0',
   `tx` char(6) DEFAULT NULL,
   `rx` char(6) DEFAULT NULL,
-  `status` char(30) NOT NULL,
+  `status` char(30) DEFAULT NULL,
   `dereg` char(24) DEFAULT NULL,
   `changed` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uniq` (`sn`,`olt_id`,`llid`) USING BTREE
+  UNIQUE KEY `uniq` (`olt_id`,`llid`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='ONU binds';

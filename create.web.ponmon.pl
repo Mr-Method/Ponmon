@@ -118,6 +118,7 @@ sub pon_list
             #[ '',           L('Ver'),          $onu->{firmware} ],
             [ '',           L('Status'),      "$t($s)" ],
             [ '',           L('LAST ERR'),    $p{dereg} ],
+            [ '',           L('LAST CHANGE'), the_time($p{changed}) ],
        ]);
     }
 
@@ -149,13 +150,14 @@ sub pon_edit
         [ '',           L('RX'),          $p{rx} ],
         [ '',           L('TX'),          $p{tx} ],
         [ '',           L('Status'),      "$t($s)" ],
-        [ 'l',          L('LAST ERR'),    $p{dereg} ],
+        # [ 'l',          L('LAST ERR'),    $p{dereg} ],
+        [ '',           L('LAST CHANGE'), the_time($p{changed}) ],
         [ '',           '',               $graph_btn ],
     ]);
     debug('pre', \%p);
 
     Show v::tag('div', id=>'a_onu_graph', -body=>'');
-    Show $tblc->show;
+    Show WideBox( msg=>$tblc->show, title=>L('BIND info') );
 
     my $tblr = tbl->new( -class=>'td_ok pretty wide_input' );
 
@@ -170,8 +172,26 @@ sub pon_edit
         id=>$domid, 'data-autoshow-userinfo'=>$domid_uinfo).v::tag('div', id=>$domid_uinfo) ],
         [ url->a(L('С кем связано'), a=>'user_select', -separator=>'&', -class=>'new_window', '-data-parent'=>$domid) ], );
 
-    #ToRight $Url->form( id=>ses::input('id'), $tblr->show );
+    my $db = Db->sql('SELECT b.*, i.auth FROM pon_fdb b LEFT JOIN v_ips i ON (i.ip = b.ip) WHERE olt_id=? AND llid=?', $p{olt_id}, $p{llid} );
+    my $tbl = tbl->new( -class=>'td_wide pretty' );
+    while( my %p = $db->line )
+    {
+        #my $auth = $p{auth} ?  v::tag('img', src=>$cfg::img_url.'/on.gif') : '';
+        #my $col_auth = $p{state} eq 'on'? 'on.gif' : '';
+        my $auth = $p{auth} ? [ v::tag('img', src=>$cfg::img_url.'/on.gif') ] : '';
+        my $client = $p{uid} ? [ Show_usr_info($p{uid}, 'adr') ] : '';
 
+        $tbl->add( $v ? '*' : 'rowoff', [
+            [ '',           L('Клиент'),      $client ],
+            [ '',           L('mac'),         $p{mac} ],
+            [ '',           L('vlan'),        $p{vlan} ],
+            [ '',           '',               $p{auth} ? [ v::tag('img', src=>$cfg::img_url.'/on.gif') ] : ''  ],
+            [ '',           L('ip'),          $p{ip} ],
+            [ '',           L('LAST CHANGE'), the_time($p{time}) ],
+       ]);
+    }
+
+    Show WideBox( msg=>$tbl->show, title=>L('FDB CACHE') ) if $db->rows;
     $totop = _('[]: OLT: [bold]: ONU: [bold]', $totop, $pon{olt}{$p{olt_id}}{name}, $p{sn});
     Doc->template('top_block')->{title} = $totop;
 }

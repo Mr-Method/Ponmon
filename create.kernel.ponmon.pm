@@ -12,6 +12,7 @@ use nod::tasks;
 
 use threads;
 use threads::shared;
+use Net::Ping;
 use Time::localtime;
 
 our @ISA = qw{kernel};
@@ -52,7 +53,7 @@ sub start
     nod::tasks->new(
         task         => sub{ main($_[0], $single, $config) },
         period       => ( int($cfg::k_ponmon_period)*60 || 600),
-        first_period => $single? 0 : ( int($cfg::k_ponmon_period)*60 || 60),
+        first_period => $single? 0 : ( int($cfg::k_ponmon_period)*60 || 600),
     );
 }
 
@@ -66,26 +67,32 @@ sub main
     );
     my $rows = $db->rows || 0;
     if (!$rows) {
-        debug "===> ERROR: No OLT in DB!!!";
-        sleep 5;
+        debug "===> ERROR: No OLT in DB!!! Retrying after 60 seconds.";
+        sleep 60;
         return 0;
     }
 
     $running_threads = $rows if $running_threads > $rows;
 
+    my $np = Net::Ping->new();
     while( my %p = $db->line )
     {
-        my threads $t = threads->create(\&init_pon, \%p);
-        push @threads, $t;
-        $t->detach();
-
-        while (wait_ps(\@threads, $running_threads)) {
-
+        if ($np->ping($p{ip}))
+        {
+            my threads $t = threads->create(\&init_pon, \%p);
+            push @threads, $t;
+            $t->detach();
         }
+        else
+        {
+            &olt_is_down(\%p);
+        }
+
+        while (wait_ps(\@threads, $running_threads)) { sleep 1; }
     }
 
     while (wait_ps(\@threads, 0)) {
-        debug  "Wait finish\n";
+        #debug  "Wait finish\n";
     }
 
     &_bind_fdb();
@@ -114,6 +121,11 @@ sub wait_ps
     return 0;
 }
 
+sub olt_is_down
+{
+    my $olt = shift;
+    #Db->do("UPDATE pon_bind SET status='99:OLT_IS_DOWN:0', changed=UNIX_TIMESTAMP() WHERE olt_id=?", $olt->{id} );
+}
 
 sub init_pon
 {
@@ -197,31 +209,31 @@ sub _parse_olt_data
         else
         {
             # debug('pre',$new_onu);
-            my $sql_query ='UPDATE pon_bind SET';
+            my $sql_query ='UPDATE pon_bind SET changed=UNIX_TIMESTAMP(),';
             my @sql_param = ();
             my $sql_where = " WHERE sn=? AND olt_id=? AND llid=? LIMIT 1";
 
-            if ( sprintf("%.1f", $new_onu->{ONU_RX_POWER}) ne sprintf("%.1f", $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{rx}) && $new_onu->{ONU_RX_POWER} ne '')
+            if ( defined $new_onu->{ONU_RX_POWER} && $new_onu->{ONU_RX_POWER} ne '' && sprintf("%.1f", $new_onu->{ONU_RX_POWER}) ne sprintf("%.1f", $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{rx}) )
             {
                 $sql_query .= " rx=?,";
                 push @sql_param, $new_onu->{ONU_RX_POWER};
             }
-            if ( sprintf("%.1f", $new_onu->{ONU_TX_POWER}) ne sprintf("%.1f", $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{tx}) && $new_onu->{ONU_TX_POWER} ne '')
+            if ( defined $new_onu->{ONU_TX_POWER} && $new_onu->{ONU_TX_POWER} ne '' && sprintf("%.1f", $new_onu->{ONU_TX_POWER}) ne sprintf("%.1f", $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{tx}) )
             {
                 $sql_query .= " tx=?,";
                 push @sql_param, $new_onu->{ONU_TX_POWER};
             }
-            if ( $new_onu->{ONU_STATUS} ne $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{status})
+            if ( defined $new_onu->{ONU_STATUS} && $new_onu->{ONU_STATUS} ne '' )
             {
                 $sql_query .= " status=?,";
                 push @sql_param, $new_onu->{ONU_STATUS};
             }
-            if ( $new_onu->{NAME} ne $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{NAME})
+            elsif ( !defined $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{status})
             {
                 $sql_query .= " status=?,";
-                push @sql_param, $new_onu->{ONU_STATUS};
+                push @sql_param, '98:Unknown:0';
             }
-            if ( $new_onu->{DEREGREASON} ne $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{dereg})
+            if ( defined $new_onu->{DEREGREASON} && $new_onu->{DEREGREASON} ne $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{dereg})
             {
                 $sql_query .= " dereg=?,";
                 push @sql_param, $new_onu->{DEREGREASON};
@@ -330,8 +342,7 @@ sub _bind_fdb
 
 sub _clean_history
 {
-    my $seconds = $history_period * 3600 * 24;
-    Db->do("DELETE FROM pon_mon WHERE `time` < (UNIX_TIMESTAMP() - ?)", $seconds) if $history_period;
+    Db->do("DELETE FROM pon_mon WHERE `time` < UNIX_TIMESTAMP(NOW() - INTERVAL ? DAY)", $history_period) if $history_period;
 }
 
 1;
