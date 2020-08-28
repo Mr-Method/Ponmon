@@ -17,9 +17,19 @@ use Time::localtime;
 
 our @ISA = qw{kernel};
 
-$cfg::_tbl_name_template = '%s_%02d';
+$cfg::_tbl_name_template = 'z%d_%02d_%02d_pon';
 
-$SIG{INT} = sub { die "\nCaught a sigint $!" };
+# Таблица суточного мониторинга
+$cfg::_slq_create_zpon_table.=<<SQL;
+(
+  `bid` mediumint(7) NOT NULL,
+  `tx` char(6) DEFAULT NULL,
+  `rx` char(6) DEFAULT NULL,
+  `time` int(11) NOT NULL DEFAULT '0',
+  KEY `time` (`time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+SQL
+
 $SIG{TERM} = sub { die "\nCaught a sigterm $!" };
 
 sub CLONE()
@@ -37,23 +47,23 @@ sub CLONE()
     ) or debug 'error','Can`t create new Db connection';
 }
 
-my $M = {};
-$M->{step} = 0;
-#share %M;
+my $step : shared = 0;
+my @threads;
 my %loaded_modules = ();
 my %onu_list = ();
-my $period = time();
-my $running_threads = ( int($cfg::k_ponmon_max_threads) || 10);
+my $period = int($cfg::k_ponmon_period) || 10;
+my $running_threads = int($cfg::k_ponmon_max_threads) || 10;
 my $history_period = int($cfg::k_ponmon_max_history) || 60;
 
 sub start
 {
     my(undef, $single, $config) = @_;
+    $0 = "nodeny::".__PACKAGE__ if $single;
 
     nod::tasks->new(
         task         => sub{ main($_[0], $single, $config) },
-        period       => ( int($cfg::k_ponmon_period)*60 || 600),
-        first_period => $single? 0 : ( int($cfg::k_ponmon_period)*60 || 600),
+        period       => $period * 60,
+        first_period => $single? 0 : $period * 60,
     );
 }
 
@@ -61,13 +71,11 @@ sub main
 {
     my($task, $single, $config) = @_;
     my @threads = ();
-    my $db = Db->sql(
-        "SELECT o.*, d.name as tname, d.document, d.tags FROM `pon_olt` o ".
-        "LEFT JOIN documents d ON (d.id = o.`mng_tmpl`) WHERE o.`enable` = 1"
-    );
+    tolog( "STEP $step START!" );
+    my $db = Db->sql("SELECT * FROM `pon_olt` WHERE `enable` = 1");
     my $rows = $db->rows || 0;
     if (!$rows) {
-        debug "===> ERROR: No OLT in DB!!! Retrying after 60 seconds.";
+        tolog( "===> ERROR: No OLT in DB!!!" );
         sleep 60;
         return 0;
     }
@@ -79,7 +87,7 @@ sub main
     {
         if ($np->ping($p{ip}))
         {
-            my threads $t = threads->create(\&init_pon, \%p);
+            my threads $t = threads->create(\&init_pon, \%p, $step);
             push @threads, $t;
             $t->detach();
         }
@@ -91,14 +99,12 @@ sub main
         while (wait_ps(\@threads, $running_threads)) { sleep 1; }
     }
 
-    while (wait_ps(\@threads, 0)) {
-        #debug  "Wait finish\n";
-    }
+    while (threads->list(threads::running) ) {}
 
-    &_bind_fdb();
+    &_sort_history();
     &_clean_history() if $history_period;
-    $M->{step}++;
-    debug "_______$M->{step}";
+    $step++;
+    return;
 }
 
 sub wait_ps
@@ -130,11 +136,14 @@ sub olt_is_down
 sub init_pon
 {
     my $olt = shift;
+    my $step = shift;
+    my $tid = threads->tid();
     # debug('pre', $olt);
+    tolog( "STEP->$step; OLT id $olt->{id}; tID->$tid : START" );
     my $module = ucfirst(lc($olt->{vendor}));
     if( my $err = _load_module($module) )
     {
-        debug 'error', $err;
+        tolog( "STEP->$step; OLT id $olt->{id}; tID->$tid : ERROR \n  $err" );
         return 0; #$crit_err;
     }
 
@@ -147,9 +156,10 @@ sub init_pon
     my $Db = Db->connect;
     my $pon = "nod::Pon::$module";
 
-    my $olt_data = $pon->main($olt, $M->{step});
+    my $olt_data = $pon->main($olt, $step);
     &_parse_olt_data( $olt_main, $olt_data );
-    return;
+    tolog( "STEP->$step; OLT id $olt->{id}; tID->$tid : FINISH" );
+    threads->exit();
 }
 
 sub _load_module
@@ -175,19 +185,14 @@ sub _parse_olt_data
         foreach my $mac (sort keys %{$olt_data->{fdb}}) {
             foreach my $vlan (sort keys %{$olt_data->{fdb}{$mac}}) {
                 foreach my $port (sort keys %{$olt_data->{fdb}{$mac}{$vlan}}) {
-                    if (!defined $olt_main->{fdb}{$mac})
-                    {
-                        Db->do("INSERT INTO pon_fdb SET mac=?, vlan=?, llid=?, olt_id=?, time=UNIX_TIMESTAMP()",
-                        $mac, $vlan, $port, $olt_id );
-                    }
-                    elsif (!defined $olt_main->{fdb}{$mac}{$vlan}{$port})
-                    {
-                        Db->do("UPDATE pon_fdb SET vlan=?, llid=?, olt_id=?, time=UNIX_TIMESTAMP() WHERE mac=?",
-                        $vlan, $port, $olt_id, $mac );
-                    }
+                    Db->do("INSERT INTO pon_fdb SET mac=?, vlan=?, llid=?, olt_id=?, time=UNIX_TIMESTAMP() ".
+                        "ON DUPLICATE KEY UPDATE mac=?, vlan=?, llid=?, olt_id=?, time=UNIX_TIMESTAMP()",
+                        $mac, $vlan, $port, $olt_id, $mac, $vlan, $port, $olt_id
+                    );
                 }
             }
         }
+        &_bind_fdb();
     }
 
     foreach my $sn (sort keys %{$olt_data->{onu_list}})
@@ -202,7 +207,10 @@ sub _parse_olt_data
         }
         if( !defined $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}} )
         {
-            Db->do("INSERT INTO pon_bind SET sn=?, olt_id=?, llid=?, tx=?, rx=?, status=?, dereg=?, changed=UNIX_TIMESTAMP()",
+            Db->do(
+                "INSERT INTO pon_bind SET sn=?, olt_id=?, llid=?, tx=?, rx=?, status=?, dereg=?, changed=UNIX_TIMESTAMP() ".
+                "ON DUPLICATE KEY UPDATE sn=?, olt_id=?, llid=?, tx=?, rx=?, status=?, dereg=?, changed=UNIX_TIMESTAMP()",
+                $sn, $olt_id, $new_onu->{LLID}, $new_onu->{ONU_TX_POWER}, $new_onu->{ONU_RX_POWER}, $new_onu->{ONU_STATUS}, $new_onu->{DEREGREASON},
                 $sn, $olt_id, $new_onu->{LLID}, $new_onu->{ONU_TX_POWER}, $new_onu->{ONU_RX_POWER}, $new_onu->{ONU_STATUS}, $new_onu->{DEREGREASON}
             );
         }
@@ -252,7 +260,6 @@ sub _get_ports
     #    $M{ports}{$p{olt_id}}{$p{p_index}} = \%p;
     }
     # debug('pre', $M{ports});
-    #exit;
 }
 
 sub _get_bind
@@ -334,6 +341,7 @@ sub _bind_fdb
             if (defined $fdb_cache{uc($mac)})
             {
                 next if $fdb_cache{uc($mac)}{uid} == $p{uid};
+                Db->do("UPDATE pon_fdb SET uid=NULL, ip=NULL WHERE mac=? OR ip=?", $mac, $p{ip} );
                 Db->do("UPDATE pon_fdb SET uid=?, ip=? WHERE mac=?", $p{uid}, $p{ip}, $mac );
             }
         }
@@ -342,7 +350,25 @@ sub _bind_fdb
 
 sub _clean_history
 {
-    Db->do("DELETE FROM pon_mon WHERE `time` < UNIX_TIMESTAMP(NOW() - INTERVAL ? DAY)", $history_period) if $history_period;
+    #my $sql = Db->sql("SELECT * FROM pon_mon WHERE time < UNIX_TIMESTAMP(CONCAT(CURDATE(), ' 00:00:00'))-1 ORDER BY time ASC" );
+    my $sql = Db->sql("SELECT * FROM pon_mon ORDER BY time ASC" );
+    my $oldtblname = '';
+    while ( my %p = $sql->line ) {
+         my $t = localtime($p{time});
+         my ($day_now, $mon_now, $year_now) = ($t->mday, $t->mon, $t->year);
+         my $traf_tbl_name = sprintf $cfg::_tbl_name_template, $year_now+1900, $mon_now+1, $day_now;
+         debug $traf_tbl_name, "\n";
+         if ($traf_tbl_name ne $oldtblname) {
+             Db->do("CREATE TABLE IF NOT EXISTS $traf_tbl_name $cfg::_slq_create_zpon_table");
+             $oldtblname = $traf_tbl_name;
+         }
+         Db->do("INSERT INTO $traf_tbl_name SET bid=?, tx=?, rx=?, time=?", $p{bid}, $p{tx}, $p{rx}, $p{time});
+         Db->do("DELETE FROM `pon_mon` WHERE bid=? and time=?", $p{bid}, $p{time});
+    }
+}
+
+sub _clean_history {
+    Db->do("DELETE FROM pon_bind WHERE changed < UNIX_TIMESTAMP(NOW() - INTERVAL 62 DAY)");
 }
 
 1;

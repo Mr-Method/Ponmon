@@ -3,8 +3,12 @@ CREATE TABLE IF NOT EXISTS `pon_fdb` (
   `vlan` smallint(4) NOT NULL,
   `llid` char(16) NOT NULL,
   `olt_id` smallint(4) NOT NULL,
-  `uid` int(10) NOT NULL DEFAULT '0',
-  `ip` char(16) NOT NULL DEFAULT '',
+  `name` varchar(32) NOT NULL DEFAULT '',
+  `uid` int(10) DEFAULT NULL,
+  `ip` char(16) DEFAULT NULL,
   `time` int(11) NOT NULL DEFAULT '0',
   UNIQUE KEY `mac` (`mac`)
+  KEY `llid` (`llid`),
+  KEY `name` (`name`),
+  KEY `ip` (`ip`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='FDB cache';

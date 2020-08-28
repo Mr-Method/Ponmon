@@ -5,6 +5,7 @@
 # https://t.me/MrMethod
 # ---------------------------------------------
 use strict;
+use Time::localtime;
 
 sub go
 {
@@ -19,6 +20,14 @@ sub _proc_onu_list
 {
     my($Url) = @_;
     my $onu = ses::input_int('bid');
+    my $time = ses::input_exists('tm_stat') ? ses::input_int('tm_stat') : $ses::t;
+    my $title = the_date($time);
+    my $_tbl_name_template = 'z%d_%02d_%02d_pon';
+
+    my $t = localtime($time);
+    my ($day_now, $mon_now, $year_now) = ($t->mday, $t->mon, $t->year);
+    my $pon_tbl_name = sprintf $_tbl_name_template, $year_now+1900, $mon_now+1, $day_now;
+    debug $pon_tbl_name, "\n";
 
     my $graph_rough = ses::input_exists('graph_rough')? ses::input_int('graph_rough') : int $ses::cookie->{graph_rough};
     # Сколько срезов группировать в один
@@ -31,7 +40,7 @@ sub _proc_onu_list
     my $series = [];
     my $min_y = 0;
 
-    my $db = Db->sql("SELECT * FROM pon_mon WHERE bid=? ORDER BY time ASC", $onu );
+    my $db = Db->sql("SELECT * FROM $pon_tbl_name WHERE bid=? ORDER BY time ASC", $onu );
     my ($rx, $tx) = 0;
     while( my %p = $db->line )
     {
@@ -65,20 +74,11 @@ sub _proc_onu_list
 
     debug 'pre', $series;
 
-    my @months = ();
-    foreach( @lang::month_names[1..12] )
-    {
-        utf8::decode($_);
-        $_ = substr $_, 0, 3;
-        utf8::encode($_);
-        push @months, _("'[filtr]'", $_);
-    }
-
     return render_template('onu_graph',
-        title  => 'title',
-        months => join(',', @months),
-        series => $series,
-        rough  => $graph_rough,
+        title   => $title,
+        y_title => 'dBi',
+        series  => $series,
+        rough   => $graph_rough,
     );
 }
 

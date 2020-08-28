@@ -9,6 +9,7 @@ use strict;
 
 my $new = {
     name        => L('Сервери OLT'),
+    name_full   => 'OLT',
     table       => 'pon_olt',
     field_id    => 'id',
     priv_show   => 'Admin',
@@ -22,14 +23,14 @@ my $new = {
 
 sub o_start
 {
+    $cfg::dir_vendors = "$cfg::dir_home/nod/Pon";
     my %Modules = ();
     $new->{_vendors} = \%Modules;
 
-    opendir(my $dh, $cfg::dir_home.'/nod/Pon') or
-        Error_Lang(
-            'Не могу прочитать каталог: [filtr|p]Если существует - проверьте права доступа.',
-            $cfg::dir_home.'/nod/Pon'
-        );
+    opendir(my $dh, $cfg::dir_vendors) or Error_Lang(
+        'Не могу прочитать каталог: [filtr|p]Если существует - проверьте права доступа.',
+        $cfg::dir_vendors
+    );
 
     # В 2 этапа, поскольку нужно исключить основные файлы, если у них есть фантомы
     while( my $module = readdir($dh) )
@@ -38,7 +39,7 @@ sub o_start
         $Modules{$module} = {};
     }
     closedir $dh;
-    keys %Modules or Error_Lang('Нет ни одного модуля вендора (файла *.pm) в каталоге: [filtr|p]', $cfg::dir_home.'/nod/Pon');
+    keys %Modules or Error_Lang('Нет ни одного модуля вендора (файла *.pm) в каталоге: [filtr|p]', $cfg::dir_vendors);
 
     return $new;
 }
@@ -58,10 +59,9 @@ sub o_list
 
     while( my %p = $db->line )
     {
-        my $id = $p{id};
         my $alive = $p{status} ? L('on') : L('off');
         $tbl->add($p{enable} ? '*' : 'rowoff', [
-            [ 'h_right',    'id',            $id ],
+            [ 'h_right',    'id',            $p{id} ],
             # [ 'h_center',   L('Сортировка'), $sort ],
             [ '',           L('Имя'),               $p{name} ],
             [ '',           L('Тип'),               $p{pon_type} ],
@@ -70,12 +70,16 @@ sub o_list
             [ '',           L('IP Адрес'),          $p{ip} ],
             [ '',           L('SNMP порт'),         $p{snmp_port} ],
             [ '',           L('Статус'),            $alive ],
-            [ '',           '',                     $d->btn_edit($id) ],
-            [ '',           '',                     $d->btn_copy($id) ],
-            [ '',           '',                     $d->btn_del($id) ],
+            [ '',           '',                     $d->btn_edit($p{id}) ],
+            [ '',           '',                     $d->btn_copy($p{id}) ],
+            [ '',           '',                     $d->btn_del($p{id}) ],
         ]);
     }
     Show $tbl->show;
+}
+
+sub o_new {
+    my($d) = @_;
 }
 
 sub o_edit
@@ -85,8 +89,6 @@ sub o_edit
     # запрет на удаление
 }
 
-sub o_new {}
-
 sub o_show
 {
     my($d) = @_;
@@ -94,6 +96,8 @@ sub o_show
     my $tbl = tbl->new( -class=>'td_ok pretty wide_input' );
 
     Doc->template('top_block')->{urls} .= ' '.url->a('help', a=>'help', theme=>'pon_mng',);
+
+    debug('pre', $d->{_vendors});
 
     my @vendorlist = ();
     foreach my $key (sort keys %{$d->{_vendors}})

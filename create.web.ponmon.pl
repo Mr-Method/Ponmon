@@ -51,7 +51,7 @@ sub go
         $menu .= $Url->a("$p{name} ($p{vendor}-$p{model}): $p{binds}", act=>'list', olt=>$p{id} );
         $counto += $p{binds};
     }
-    $menu = $Url->a("All OLT: $counto", act=>'list', olt=>0 ) .$menu;
+    $menu = $Url->a("All OLT: $counto", act=>'list', olt=>0 )."<hr>" .$menu ."<hr>";
     $menu .= $Url->a("Manage OLTs", act=>'pon_olt', a=>'op' );
     $menu && ToLeft Menu($menu);
     # my $search_block = '';
@@ -87,7 +87,10 @@ sub pon_list
     if( defined ses::input('sn'))
     {
         my $sn = Db->filtr(uc(ses::input('sn')));
-        $sql->[0] .= " AND sn LIKE '%".$sn."%'";
+        my $mac = $sn;
+        $mac =~ s/[-:\.]//g;
+        $mac =~ s/(..)(?=.)/$1:/g;
+        $sql->[0] .= " AND (sn LIKE '%".$sn."%' OR sn LIKE '%".$mac."%')";
         $Url->{sn} = $sn;
     }
 
@@ -134,13 +137,18 @@ sub pon_edit
     my $fields = Data::fields->new(0, ['d'], { _adr_place => 1 });
     my @buttons = ();
 
+    my $Ftm_stat = ses::input_int('tm_stat') || $ses::t;
+    $Ftm_stat = $ses::t if $Ftm_stat > 1956513600; # не больше 2032г. - мало ли как mysql поведет себя...
+    $url->{tm_stat} = $Ftm_stat if ses::input_exists('tm_stat');
+    $url->{bid} = ses::input_int('bid') if ses::input_exists('bid');
+
     my %p = Db->line('SELECT b.*, o.vendor, o.model, o.firmware, o.descr FROM `pon_bind` b LEFT JOIN pon_onu o ON (b.sn=o.sn) WHERE b.id=?', ses::input('bid') );
     my $tblc = tbl->new( -class=>'td_wide pretty' );
 
     my $domid2 = v::get_uniq_id();
-    my $graph_btn = [ url->a(L('Графік'), a=>'ajOnuGraph', bid=>$p{id}, -ajax=>1) ]; # , '-data-ajax-into-here'=>1)
     my $dereg_btn = [ url->a('Dereg', a=>'ajOnuMenu', bid=>$p{id}, domid=>$domid2, -ajax=>1) ];
     my $reset_btn = [ url->a('Reboot', a=>'ajOnuMenu', bid=>$p{id}, domid=>$domid2, -ajax=>1) ];
+    ToLeft MessageWideBox( Get_list_of_stat_days('Z', $url, $Ftm_stat) );
 
     my ($s, $t, $v) = split /\:/, $p{status};
     $tblc->add( $v ? '*' : 'rowoff', [
@@ -196,8 +204,45 @@ sub pon_edit
     Doc->template('top_block')->{title} = $totop;
 }
 
-sub pon_help
+sub Get_list_of_stat_days
 {
+    my($tbl_type, $url, $sel_time) = @_;
+    my $dbh = Db->dbh;
+    my $sth = $dbh->prepare('SHOW TABLES');
+    $sth->execute or return '';
+    my $t = localtime(int $sel_time);
+    # строка для сравнения с днем, который необходимо выделить
+    $sel_time = $t->mday.'.'.$t->mon.'.'.$t->year;
+    debug("SHOW TABLES (Таблиц: ".$sth->rows.")");
+    my %days;
+    while ( my $p = $sth->fetchrow_arrayref )
+    {
+        $p->[0] =~ /^z(\d\d\d\d)_(\d+)_(\d+)_pon$/i or next;
+        my $time = timelocal(59,59,23,$3,$2-1,$1); # конец дня
+        $days{$time} = substr('0'.$3,-2,2).'.'.substr('0'.$2,-2,2).'.'.$1;
+    }
+    my $list_of_days = '';
+    my $t1 = 0;
+    my $t2 = 0;
+    foreach my $time ( sort {$b <=> $a} keys %days )
+    {
+        my $t = localtime($time);
+        my $day  = $t->mday;
+        my $mon  = $t->mon;
+        my $year = $t->year;
+        if( $t1 != $mon || $t2 != $year )
+        {
+            $t1 = $mon;
+            $t2 = $year;
+            $list_of_days .= _('[p]&nbsp;', $lang::month_names[$mon+1].' '.($year+1900).':');
+        }
+        #$list_of_days .= $url->a( $day, tm_stat=>$time, -active=>$sel_time eq "$day.$mon.$year" );
+        $list_of_days .= url->a( $day, a=>'ajOnuGraph', bid=>ses::input_int('bid'), tm_stat=>$time, -ajax=>1 );
+        $list_of_days .= $day==11 || $day==21? '<br>&nbsp;' : ' ';
+    }
+    return $list_of_days;
 }
+
+sub pon_help {}
 
 1;

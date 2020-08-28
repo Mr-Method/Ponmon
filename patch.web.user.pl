@@ -3,8 +3,9 @@
  if( Adm->chk_privil('SuperAdmin') || Adm->chk_privil('1201') )
  {
     my $db = Db->sql(
-        "SELECT b.*, f.`ip`, f.`mac` FROM `pon_bind` b LEFT JOIN `pon_fdb` f ".
-        "ON (b.`olt_id`=f.`olt_id` AND b.`llid`=f.`llid` ) WHERE uid=?", $Fuid
+        "SELECT b.*, f.ip, f.mac, o.name AS oname, o.pon_type FROM pon_bind b ".
+        "LEFT JOIN pon_fdb f ON (b.olt_id=f.olt_id AND b.llid=f.llid ) ".
+        "LEFT JOIN pon_olt o ON (o.id=f.olt_id ) WHERE uid=?", $Fuid
     );
 
 #    if (!$db->rows) # && defined cfg _mac_onu_client dopfield
@@ -22,19 +23,17 @@
         my $info = (Adm->chk_privil('SuperAdmin') || Adm->chk_privil('1202')) ?
             [ url->a('INFO', a=>'ponmon', act=>'edit', bid=>$p{id}, -class=>'nav') ] : '';
         my ($s, $t, $v) = split /\:/, $p{status};
-        my $last = the_time($p{changed});
-        $last .= "<br>($p{dereg})" if $p{dereg} ne '';
 
         $tbl->add( $v ? '*' : 'rowoff', [
             [ '',           '',               $info ],
             [ '',           L('MAC'),         $p{mac} ],
             [ '',           L('IP'),          $p{ip} ],
-            [ '',           L('OLT'),         $p{olt_id} ],
+            [ '',           L('OLT'),         $p{oname} ],
             [ '',           L('ONU'),         $p{sn} ],
             [ '',           L('RX'),          $p{rx} ],
             [ '',           L('TX'),          $p{tx} ],
             [ '',           L('Status'),      "$t($s)" ],
-            [ '',           L('LAST CHANGE'), [ $last], ],
+            [ '',           L('Updated'),     the_time($p{changed}) ],
         ]);
     }
     # Show WideBox( msg=>$tbl->show, title=>L('PON') );

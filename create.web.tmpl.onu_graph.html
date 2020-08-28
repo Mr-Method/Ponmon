@@ -1,28 +1,4 @@
 #<ACTION> file=>'web/tmpl/onu_graph.html',hook=>'new'
-<style type='text/css'>
-<!--
-.graph_slider {
-    display: inline-block;
-}
-.graph_slider a {
-    display: inline-block;
-    background-color: #c0c0c0;
-    width: 10pt;
-    height: 10pt;
-    margin: 1px;
-}
-.graph_slider a.active {
-    background-color: #90a0b0;
-}
-.graph_slider a:hover {
-    background-color: #90a0b0;
-}
-#graph {
-    margin: 0 auto;
-}
--->
-</style>
-
 <div id='graph'></div>
 <script type='text/javascript'>
 $(document).ready(function()
@@ -38,7 +14,7 @@ $(document).ready(function()
             loading: 'Загрузка...',
             months: ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'],
             weekdays: ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'],
-            //shortMonths: ['Янв', 'Фев', 'Март', 'Апр', 'Май', 'Июнь', 'Июль', 'Авг', 'Сент', 'Окт', 'Нояб', 'Дек'],
+            shortMonths: ['Янв', 'Фев', 'Март', 'Апр', 'Май', 'Июнь', 'Июль', 'Авг', 'Сент', 'Окт', 'Нояб', 'Дек'],
         }
     });
 
@@ -70,7 +46,8 @@ $(document).ready(function()
                 },
                 {% else %}
                 formatter: function() {
-                        return Highcharts.dateFormat('%e-%b-\'%y<br>%H:%M', this.value);
+                        //return Highcharts.dateFormat('%e-%b-\'%y<br>%H:%M', this.value);
+                        return Highcharts.dateFormat('%H:%M', this.value);
                 },
                 {% endif %}
             },
@@ -80,10 +57,10 @@ $(document).ready(function()
         },
         yAxis: {
             //title: false,
-            /*{
-                text: '{{y_title}}'
+            title: {
+                text: "{{y_title}}",
             },
-            min: '{{y_min}}',*/
+            //min: '{{y_min}}',
             startOnTick: true,
             showFirstLabel: false,
         },
