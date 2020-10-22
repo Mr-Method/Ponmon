@@ -3,7 +3,7 @@
  if( Adm->chk_privil('SuperAdmin') || Adm->chk_privil('1201') )
  {
     my $db = Db->sql(
-        "SELECT b.*, f.ip, f.mac, o.name AS oname, o.pon_type FROM pon_bind b ".
+        "SELECT b.*, f.ip, f.mac, f.name AS fname, o.name AS oname, o.pon_type FROM pon_bind b ".
         "LEFT JOIN pon_fdb f ON (b.olt_id=f.olt_id AND b.llid=f.llid ) ".
         "LEFT JOIN pon_olt o ON (o.id=f.olt_id ) WHERE uid=?", $Fuid
     );
@@ -17,7 +17,7 @@
 #        $db = Db->sql("SELECT *, '' as ip FROM pon_bind WHERE sn=? or sn=?", $o_sn, $o_mac);
 #    }
 
-    my $tbl = tbl->new( -class=>'pretty width100' );
+    my $tbl = tbl->new( -class=>'td_medium td_ok width100' );
     while( my %p = $db->line )
     {
         my $info = (Adm->chk_privil('SuperAdmin') || Adm->chk_privil('1202')) ?
@@ -25,17 +25,15 @@
         my ($s, $t, $v) = split /\:/, $p{status};
 
         $tbl->add( $v ? '*' : 'rowoff', [
-            [ '',           '',               $info ],
-            [ '',           L('MAC'),         $p{mac} ],
-            [ '',           L('IP'),          $p{ip} ],
-            [ '',           L('OLT'),         $p{oname} ],
-            [ '',           L('ONU'),         $p{sn} ],
-            [ '',           L('RX'),          $p{rx} ],
-            [ '',           L('TX'),          $p{tx} ],
-            [ '',           L('Status'),      "$t($s)" ],
-            [ '',           L('Updated'),     the_time($p{changed}) ],
+            [ '',           '',                     $info ],
+            [ '',           L('MAC').'/'.L('IP'),   [_('[dl]', _('[dt][dt]', $p{mac},$p{ip}))] ],
+            [ '',           L('OLT'),               $p{oname}.' ' ],
+            [ '',           L('ONU'),               [_('[dl]', _('[dt][dt]', $p{sn},$p{fname}))] ],
+            [ '',           L('dBm'),               [_('[dl]', _('[dt][dt]', L('RX').': '.$p{rx},L('TX').': '.$p{tx}))] ],
+            [ '',           L('Status'),            "$t($s) " ],
+            [ '',           L('Updated'),           the_time($p{changed}) ],
         ]);
     }
-    # Show WideBox( msg=>$tbl->show, title=>L('PON') );
+    #Show WideBox( msg=>$tbl->show, title=>L('PON') );
     push @left, WideBox( msg=>$tbl->show, title=>L('PON') ) if $db->rows; # unshift
  }

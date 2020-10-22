@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS `pon_olt` (
   `rw_comunity` varchar(32) NOT NULL DEFAULT '',
   `pon_type` char(8) NOT NULL DEFAULT 'gpon',
   `mng_tmpl` int(4) NOT NULL DEFAULT '0',
+  `param` varchar(1024) DEFAULT NULL,
   `descr` varchar(250) NOT NULL DEFAULT '',
   `status` tinyint(1) NOT NULL DEFAULT '9',
   `enable` tinyint(1) NOT NULL DEFAULT '0',

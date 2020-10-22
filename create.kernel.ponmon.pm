@@ -10,11 +10,11 @@ use Debug;
 use Db;
 use nod::tasks;
 
-use threads;
-use threads::shared;
 use Net::Ping;
 use Time::localtime;
+use Parallel::ForkManager;
 
+$SIG{CHLD} = 'IGNORE';
 our @ISA = qw{kernel};
 
 $cfg::_tbl_name_template = 'z%d_%02d_%02d_pon';
@@ -30,26 +30,7 @@ $cfg::_slq_create_zpon_table.=<<SQL;
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 SQL
 
-$SIG{TERM} = sub { die "\nCaught a sigterm $!" };
-
-sub CLONE()
-{
-    no warnings;
-    Db->new(
-        host    => $cfg::Db_server,
-        user    => $cfg::Db_user,
-        pass    => $cfg::Db_pw,
-        db      => $cfg::Db_name,
-        timeout => $cfg::Db_connect_timeout,
-        tries   => 3, # попыток с интервалом в секунду соединиться
-        global  => 1, # создать глобальный объект Db, чтобы можно было вызывать абстрактно: Db->sql()
-        pool    => $cfg::Db_pool || [],
-    ) or debug 'error','Can`t create new Db connection';
-}
-
-my $step : shared = 0;
-my @threads;
-my %loaded_modules = ();
+my $step = 0;
 my %onu_list = ();
 my $period = int($cfg::k_ponmon_period) || 10;
 my $running_threads = int($cfg::k_ponmon_max_threads) || 10;
@@ -58,10 +39,11 @@ my $history_period = int($cfg::k_ponmon_max_history) || 60;
 sub start
 {
     my(undef, $single, $config) = @_;
-    $0 = "nodeny::".__PACKAGE__ if $single;
+    my %forks = ();
+    my $pm = Parallel::ForkManager->new($running_threads);
 
     nod::tasks->new(
-        task         => sub{ main($_[0], $single, $config) },
+        task         => sub{ main($_[0], $single, $config, $pm, \%forks ) },
         period       => $period * 60,
         first_period => $single? 0 : $period * 60,
     );
@@ -69,104 +51,123 @@ sub start
 
 sub main
 {
-    my($task, $single, $config) = @_;
-    my @threads = ();
-    tolog( "STEP $step START!" );
+    my($task, $single, $config, $pm, $forks) = @_;
+    $pm->is_parent or return;
+    $pm->reap_finished_children;
+    $step++;
+    #debug 'pre', $forks;
+    tolog( "STEP $step START! PID [$$] with running kids: ".scalar %$forks );
+    my @pids = $pm->running_procs;
+    if ( scalar @pids ) {
+        for my $pid ( $pm->running_procs ) {
+            if ( $forks->{$pid}{'time'} + ( $period * 120 ) < time ) {
+                kill 'KILL', $pid;
+            }
+        }
+    } else {
+        undef %$forks;
+    }
+
+    Db->connect;
     my $db = Db->sql("SELECT * FROM `pon_olt` WHERE `enable` = 1");
     my $rows = $db->rows || 0;
     if (!$rows) {
-        tolog( "===> ERROR: No OLT in DB!!!" );
+        tolog( "ERROR: DB \t===> No OLT in DB!!!" );
         sleep 60;
         return 0;
     }
 
-    $running_threads = $rows if $running_threads > $rows;
+    $pm->set_max_procs($rows*2);
+    $pm->run_on_finish( sub {
+        my ($pid, $exit_code, $ident) = @_;
+        undef $forks->{$pid};
+        print "** $ident just got out of the pool with PID $pid and exit code: $exit_code\n";
+    });
 
-    my $np = Net::Ping->new();
-    while( my %p = $db->line )
-    {
-        if ($np->ping($p{ip}))
-        {
-            my threads $t = threads->create(\&init_pon, \%p, $step);
-            push @threads, $t;
-            $t->detach();
-        }
-        else
-        {
-            &olt_is_down(\%p);
-        }
-
-        while (wait_ps(\@threads, $running_threads)) { sleep 1; }
-    }
-
-    while (threads->list(threads::running) ) {}
+    $pm->run_on_start( sub {
+        my ($pid, $ident)=@_;
+            $forks->{$pid}{'time'} = time;
+            $forks->{$pid}{'step'} = $step;
+        print "** $ident started, pid: $pid\n";
+    });
 
     &_sort_history();
     &_clean_history() if $history_period;
-    $step++;
-    return;
-}
 
-sub wait_ps
-{
-    my($threads, $max_threads) = @_;
-    my $running_ps = 0;
+    #$SIG{'INT'} = sub { map{ $PonQueue->enqueue(0) } 1..$running_threads; };
+    #$SIG{TERM} = sub { map{ $PonQueue->enqueue(0) } 1..$running_threads; };
 
-    foreach my threads $th (@$threads)
-    {
-        my $running = $th->is_running();
-        $running_ps++ if ($running);
-    }
+    my $np = Net::Ping->new();
+    WORK:
+    while ( my %p = $db->line ) {
+        # Forks and returns the pid for the child:
+        $pm->start and next WORK;
 
-    if( $running_ps > $max_threads )
-    {
-        # debug "Threads:\n\t Running: $running_ps\n\t Total: $#{$threads}";
         sleep 2;
-        return 1;
+        $0 = "nodeny::".__PACKAGE__;
+        &init_pon({olt=>\%p, step=>$step, timeout=>480});
+        $pm->finish; # Terminates the child process
     }
-    return 0;
 }
 
-sub olt_is_down
+sub _document
 {
-    my $olt = shift;
-    #Db->do("UPDATE pon_bind SET status='99:OLT_IS_DOWN:0', changed=UNIX_TIMESTAMP() WHERE olt_id=?", $olt->{id} );
+    my $mng_tmpl = shift;
+    my %settings = ();
+    return \%settings if !$mng_tmpl;
+    my %p = Db->line('SELECT document FROM documents WHERE id=? AND is_section=0', $mng_tmpl );
+    %p or return \%settings;
+    $p{document} =~ s/\r//gm;
+    foreach my $line ( split /\n/, $p{document} ) {
+        chomp($line);
+        $line =~ /([^=\s]+)\s*=\s*(.+)/ or next;
+        $settings{$1} = $2;
+    }
+    chomp(%settings);
+    return \%settings;
 }
 
 sub init_pon
 {
-    my $olt = shift;
-    my $step = shift;
-    my $tid = threads->tid();
+    my $work = shift;
+    $0 = "nodeny::".__PACKAGE__;
+    local $SIG{ALRM} = sub {
+        local $SIG{TERM} = 'IGNORE';
+        kill TERM => -$$;
+        die "CHILD PID [$$] [$0] DIE BY TIMEOUT!\n";
+    };
+    #local $SIG{ALRM} = sub {  die "CHILD PID [$$] [$0] DIE BY TIMEOUT!"};
+    alarm($work->{timeout});
+    $0 = "nodeny::".__PACKAGE__;
+    my $olt = $work->{olt};
+    Db->connect;
+    $olt->{cfg} = &_document($olt->{'mng_tmpl'});
     # debug('pre', $olt);
-    tolog( "STEP->$step; OLT id $olt->{id}; tID->$tid : START" );
+    my $step = $work->{step};
+
+    tolog( "STEP->$step; OLT id $olt->{id} : START" );
     my $module = ucfirst(lc($olt->{vendor}));
     if( my $err = _load_module($module) )
     {
-        tolog( "STEP->$step; OLT id $olt->{id}; tID->$tid : ERROR \n  $err" );
-        return 0; #$crit_err;
+        tolog( "ERROR: OLT id $olt->{id} ===>\t $err" );
+        die;
     }
 
-    my $olt_main = ();
-    $olt_main->{olt} = $olt;
-    $olt_main->{onu_list} = &_get_onu_list() || {};
-    $olt_main->{onu_bind} = &_get_bind() || {};
-    $olt_main->{fdb} = &_get_fdb() || {};
-    # debug('pre', $olt_main);
-    my $Db = Db->connect;
     my $pon = "nod::Pon::$module";
 
     my $olt_data = $pon->main($olt, $step);
-    &_parse_olt_data( $olt_main, $olt_data );
-    tolog( "STEP->$step; OLT id $olt->{id}; tID->$tid : FINISH" );
-    threads->exit();
+    &_parse_olt_data( $olt_data, $olt );
+    tolog( "STEP->$step; OLT id $olt->{id} : FINISH" );
+    return;
 }
 
-sub _load_module
-{
+sub _load_module {
     my($name) = shift;
     $name = ucfirst(lc($name));
     debug "$cfg::dir_home/nod/Pon/$name.pm";
+    if (grep { $_ eq "$cfg::dir_home/nod/Pon/_$name.pm" } values %INC || grep { $_ eq "$cfg::dir_home/nod/Pon/$name.pm" } values %INC) {
+        return;
+    }
     eval{ require "$cfg::dir_home/nod/Pon/_$name.pm" };
     my $err = "$@";
     debug 'error', $err if $err && -e "$cfg::dir_home/nod/Pon/_$name.pm";
@@ -176,23 +177,31 @@ sub _load_module
 
 sub _parse_olt_data
 {
-    my $olt_main = shift;
     my $olt_data = shift;
-    my $olt_id = $olt_main->{olt}{id};
+    my $olt = shift;
+    my $olt_main;
+    my $olt_id = $olt->{id};
 
     if( defined $olt_data->{fdb} )
     {
-        foreach my $mac (sort keys %{$olt_data->{fdb}}) {
-            foreach my $vlan (sort keys %{$olt_data->{fdb}{$mac}}) {
-                foreach my $port (sort keys %{$olt_data->{fdb}{$mac}{$vlan}}) {
-                    Db->do("INSERT INTO pon_fdb SET mac=?, vlan=?, llid=?, olt_id=?, time=UNIX_TIMESTAMP() ".
-                        "ON DUPLICATE KEY UPDATE mac=?, vlan=?, llid=?, olt_id=?, time=UNIX_TIMESTAMP()",
-                        $mac, $vlan, $port, $olt_id, $mac, $vlan, $port, $olt_id
+        #$olt_main->{fdb} = &_get_fdb() || {};
+        foreach my $port (sort keys %{$olt_data->{fdb}}) {
+            foreach my $vlan (sort keys %{$olt_data->{fdb}{$port}}) {
+                foreach my $mac (sort keys %{$olt_data->{fdb}{$port}{$vlan}}) {
+                    my $xname = $olt_data->{fdb}{$port}{$vlan}{$mac} || '';
+                    Db->do("INSERT INTO pon_fdb SET mac=?, vlan=?, llid=?, olt_id=?, name=?, time=UNIX_TIMESTAMP() ".
+                        "ON DUPLICATE KEY UPDATE mac=?, vlan=?, llid=?, olt_id=?, name=?, time=UNIX_TIMESTAMP()",
+                        $mac, $vlan, $port, $olt_id, $xname, $mac, $vlan, $port, $olt_id, $xname
                     );
                 }
             }
         }
         &_bind_fdb();
+    }
+
+    if ( defined $olt_data->{onu_list}) {
+        $olt_main->{onu_list} = &_get_onu_list() || {};
+        $olt_main->{onu_bind} = &_get_bind() || {};
     }
 
     foreach my $sn (sort keys %{$olt_data->{onu_list}})
@@ -207,11 +216,10 @@ sub _parse_olt_data
         }
         if( !defined $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}} )
         {
-            Db->do(
-                "INSERT INTO pon_bind SET sn=?, olt_id=?, llid=?, tx=?, rx=?, status=?, dereg=?, changed=UNIX_TIMESTAMP() ".
-                "ON DUPLICATE KEY UPDATE sn=?, olt_id=?, llid=?, tx=?, rx=?, status=?, dereg=?, changed=UNIX_TIMESTAMP()",
-                $sn, $olt_id, $new_onu->{LLID}, $new_onu->{ONU_TX_POWER}, $new_onu->{ONU_RX_POWER}, $new_onu->{ONU_STATUS}, $new_onu->{DEREGREASON},
-                $sn, $olt_id, $new_onu->{LLID}, $new_onu->{ONU_TX_POWER}, $new_onu->{ONU_RX_POWER}, $new_onu->{ONU_STATUS}, $new_onu->{DEREGREASON}
+            Db->do("INSERT INTO pon_bind SET sn=?, olt_id=?, llid=?, tx=?, rx=?, status=?, changed=UNIX_TIMESTAMP() ".
+                "ON DUPLICATE KEY UPDATE sn=?, olt_id=?, llid=?, tx=?, rx=?, status=?, changed=UNIX_TIMESTAMP()",
+                $sn, $olt_id, $new_onu->{LLID}, $new_onu->{ONU_TX_POWER}, $new_onu->{ONU_RX_POWER}, $new_onu->{ONU_STATUS},
+                $sn, $olt_id, $new_onu->{LLID}, $new_onu->{ONU_TX_POWER}, $new_onu->{ONU_RX_POWER}, $new_onu->{ONU_STATUS},
             );
         }
         else
@@ -220,31 +228,30 @@ sub _parse_olt_data
             my $sql_query ='UPDATE pon_bind SET changed=UNIX_TIMESTAMP(),';
             my @sql_param = ();
             my $sql_where = " WHERE sn=? AND olt_id=? AND llid=? LIMIT 1";
-
-            if ( defined $new_onu->{ONU_RX_POWER} && $new_onu->{ONU_RX_POWER} ne '' && sprintf("%.1f", $new_onu->{ONU_RX_POWER}) ne sprintf("%.1f", $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{rx}) )
+            my $data = 0;
+            if ( defined $new_onu->{ONU_RX_POWER} && $new_onu->{ONU_RX_POWER} ne '0' )
             {
+                $data = 1;
                 $sql_query .= " rx=?,";
                 push @sql_param, $new_onu->{ONU_RX_POWER};
-            }
-            if ( defined $new_onu->{ONU_TX_POWER} && $new_onu->{ONU_TX_POWER} ne '' && sprintf("%.1f", $new_onu->{ONU_TX_POWER}) ne sprintf("%.1f", $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{tx}) )
+            } else { $new_onu->{ONU_RX_POWER} = '0' }
+            if ( defined $new_onu->{ONU_TX_POWER} && $new_onu->{ONU_TX_POWER} ne '0' )
             {
+                $data = 1;
                 $sql_query .= " tx=?,";
                 push @sql_param, $new_onu->{ONU_TX_POWER};
-            }
+            } else { $new_onu->{ONU_RX_POWER} = '0' }
             if ( defined $new_onu->{ONU_STATUS} && $new_onu->{ONU_STATUS} ne '' )
             {
                 $sql_query .= " status=?,";
-                push @sql_param, $new_onu->{ONU_STATUS};
-            }
-            elsif ( !defined $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{status})
-            {
+                if ( $data && $new_onu->{ONU_STATUS} =~ m/\:0/) {
+                    push @sql_param, '90:Unknown:1';
+                } else {
+                    push @sql_param, $new_onu->{ONU_STATUS};
+                }
+            } elsif ( !defined $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{status} ) {
                 $sql_query .= " status=?,";
                 push @sql_param, '98:Unknown:0';
-            }
-            if ( defined $new_onu->{DEREGREASON} && $new_onu->{DEREGREASON} ne $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}{dereg})
-            {
-                $sql_query .= " dereg=?,";
-                push @sql_param, $new_onu->{DEREGREASON};
             }
             $sql_query =~ s/\,$//g;
             Db->do( $sql_query.$sql_where, @sql_param, $sn, $olt_id, $new_onu->{LLID}) if scalar @sql_param;
@@ -320,17 +327,7 @@ sub hash_merge
 
 sub _bind_fdb
 {
-    my %fdb_cache = ();
-    {
-        my $db = Db->sql("SELECT * FROM `pon_fdb`");
-        $db->rows or return;
-        while( my %p = $db->line )
-        {
-            $fdb_cache{$p{mac}} = \%p;
-        }
-    }
-
-    my $db = Db->sql("SELECT * FROM `v_ips` WHERE `auth`=1");
+    my $db = Db->sql("SELECT * FROM v_ips WHERE auth=1");
     while( my %p = $db->line )
     {
         next if $p{properties} eq '';
@@ -338,17 +335,12 @@ sub _bind_fdb
         if( my $mac = $prop{user} )
         {
             $mac =~ s/(..)(?=.)/$1:/g;
-            if (defined $fdb_cache{uc($mac)})
-            {
-                next if $fdb_cache{uc($mac)}{uid} == $p{uid};
-                Db->do("UPDATE pon_fdb SET uid=NULL, ip=NULL WHERE mac=? OR ip=?", $mac, $p{ip} );
-                Db->do("UPDATE pon_fdb SET uid=?, ip=? WHERE mac=?", $p{uid}, $p{ip}, $mac );
-            }
+            Db->do("UPDATE pon_fdb SET uid=?, ip=? WHERE mac=?", $p{uid}, $p{ip}, $mac );
         }
     }
 }
 
-sub _clean_history
+sub _sort_history
 {
     #my $sql = Db->sql("SELECT * FROM pon_mon WHERE time < UNIX_TIMESTAMP(CONCAT(CURDATE(), ' 00:00:00'))-1 ORDER BY time ASC" );
     my $sql = Db->sql("SELECT * FROM pon_mon ORDER BY time ASC" );
@@ -368,7 +360,8 @@ sub _clean_history
 }
 
 sub _clean_history {
-    Db->do("DELETE FROM pon_bind WHERE changed < UNIX_TIMESTAMP(NOW() - INTERVAL 62 DAY)");
+    Db->do("DELETE FROM pon_bind WHERE changed < UNIX_TIMESTAMP(NOW() - INTERVAL 7 DAY)");
+    Db->do("DELETE FROM pon_fdb WHERE time < UNIX_TIMESTAMP(NOW() - INTERVAL 2 DAY)");
 }
 
 1;

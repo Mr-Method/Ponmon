@@ -16,7 +16,7 @@ my $new = {
     priv_edit   => 'SuperAdmin',
     priv_copy   => 'SuperAdmin',
     allow_copy  => 1,
-    sql_get     => 'SELECT * FROM pon_olt WHERE id=? GROUP BY id',
+    sql_get     => 'SELECT * FROM pon_olt WHERE id=?',
     menu_create => L('Новий OLT'),
     menu_list   => L('Всі OLT'),
 };
@@ -47,6 +47,7 @@ sub o_start
 sub o_list
 {
     my($d) = @_;
+    Doc->template('top_block')->{title} = $d->{name};
     my $tbl = tbl->new( -class=>'td_wide pretty', -head=>'head', -row1=>'row3', -row2=>'row3' );
     my $url = $d->{url}->new();
 
@@ -59,7 +60,6 @@ sub o_list
 
     while( my %p = $db->line )
     {
-        my $alive = $p{status} ? L('on') : L('off');
         $tbl->add($p{enable} ? '*' : 'rowoff', [
             [ 'h_right',    'id',            $p{id} ],
             # [ 'h_center',   L('Сортировка'), $sort ],
@@ -69,7 +69,6 @@ sub o_list
             [ '',           L('Model'),             $p{model} ],
             [ '',           L('IP Адрес'),          $p{ip} ],
             [ '',           L('SNMP порт'),         $p{snmp_port} ],
-            [ '',           L('Статус'),            $alive ],
             [ '',           '',                     $d->btn_edit($p{id}) ],
             [ '',           '',                     $d->btn_copy($p{id}) ],
             [ '',           '',                     $d->btn_del($p{id}) ],
@@ -80,19 +79,29 @@ sub o_list
 
 sub o_new {
     my($d) = @_;
+    $d->{d}{param} = {};
 }
 
 sub o_edit
 {
     my($d) = @_;
+    $d->{d}{param} = Debug->do_eval($d->{d}{param});
+    if ( !$d->{d}{param} || $d->{d}{param} eq '' )
+    {
+        ToTop L('Внимание. Параметры не расшифрованы т.к. они повреждены');
+        $d->{d}{param} = {};
+    }
+
     $d->{name_full} = _('[] [filtr|commas] № [filtr]', $new->{name}, $d->{d}{name}||L('без адреса'), $d->{d}{id});
     # запрет на удаление
+    #$d->{no_delete} = L('услуга подключена к [] клиентам', $d->{d}{now_count}) if $d->{d}{now_count}>0;
 }
 
 sub o_show
 {
     my($d) = @_;
     my @menu = ();
+    my %params = defined $d->{d}{param} ? %{$d->{d}{param}} : {};
     my $tbl = tbl->new( -class=>'td_ok pretty wide_input' );
 
     Doc->template('top_block')->{urls} .= ' '.url->a('help', a=>'help', theme=>'pon_mng',);
@@ -144,20 +153,36 @@ sub o_show
         selected => $d->{d}{mng_tmpl},
     );
 
-    $tbl->add('', 'll', [ v::input_t(name=>'name', value=>$d->{d}{name}) ],                     L('name'), );
-    $tbl->add('', 'll', [ $vendors ],                                                           L('vendor'), );
-    $tbl->add('', 'll', [ v::input_t(name=>'model', value=>$d->{d}{model}) ],                   L('model'), );
-    $tbl->add('', 'll', [ v::input_t(name=>'firmware', value=>$d->{d}{firmware}) ],             L('firmware'), );
+    $tbl->add('', 'll', L('Увімкнути'),             [ v::checkbox( name=>'enable', value=>1, checked=>$d->{d}{enable}) ],   );
+    $tbl->add('', 'll', L('name'),                  [ v::input_t(name=>'name', value=>$d->{d}{name}) ],                     );
+    $tbl->add('', 'll', L('vendor'),                [ $vendors ],                                                           );
+    $tbl->add('', 'll', L('model'),                 [ v::input_t(name=>'model', value=>$d->{d}{model}) ],                   );
+    $tbl->add('', 'll', L('firmware'),              [ v::input_t(name=>'firmware', value=>$d->{d}{firmware}) ],             );
 
-    $tbl->add('', 'll', [ v::input_t(name=>'ip', value=>$d->{d}{ip}) ],                         L('IP'), );
-    $tbl->add('', 'll', [ v::input_t(name=>'snmp_port', value=>$d->{d}{snmp_port}) ],           L('SNMP Port'), ) if Adm->chk_privil('SuperAdmin');
-    $tbl->add('', 'll', [ v::input_t(name=>'ro_comunity', value=>$d->{d}{ro_comunity}) ],       L('ro_comunity'), ) if Adm->chk_privil('SuperAdmin');
-    $tbl->add('', 'll', [ v::input_t(name=>'rw_comunity', value=>$d->{d}{rw_comunity}) ],       L('rw_comunity'), ) if Adm->chk_privil('SuperAdmin');
+    $tbl->add('', 'll', L('IP'),                    [ v::input_t(name=>'ip', value=>$d->{d}{ip}) ],                         );
+    $tbl->add('', 'll', L('SNMP Port'),             [ v::input_t(name=>'snmp_port', value=>$d->{d}{snmp_port}) ],           ) if Adm->chk_privil('SuperAdmin');
+    $tbl->add('', 'll', L('ro_comunity'),           [ v::input_t(name=>'ro_comunity', value=>$d->{d}{ro_comunity}) ],       ) if Adm->chk_privil('SuperAdmin');
+    $tbl->add('', 'll', L('rw_comunity'),           [ v::input_t(name=>'rw_comunity', value=>$d->{d}{rw_comunity}) ],       ) if Adm->chk_privil('SuperAdmin');
 
-    $tbl->add('','ll',  [ $pontype ],                                                           L('pon_type'), ) if Adm->chk_privil('SuperAdmin');
-    $tbl->add('', 'll', [ $mng_tmpl ],                                                          L('Management template'), ) if Adm->chk_privil('SuperAdmin');
-    $tbl->add('', 'll', [ v::input_ta('descr', $d->{d}{descr}, 36, 6) ],                        L('Комментар'), );
-    $tbl->add('', 'rl', [ v::checkbox( name=>'enable', value=>1, checked=>$d->{d}{enable}) ],   L('Увімкнути'), );
+    $tbl->add('', 'll', L('pon_type'),              [ $pontype ],                                                           ) if Adm->chk_privil('SuperAdmin');
+    $tbl->add('', 'll', L('Management template'),   [ $mng_tmpl ],                                                          ) if Adm->chk_privil('SuperAdmin');
+    $tbl->add('', 'll', L('Комментар'),             [ v::input_ta('descr', $d->{d}{descr}, 36, 6) ],                        );
+    $tbl->add('', 'C',  L('Додаткові параметри') );
+    $tbl->add('', 'cc', L('ключ'), L('значення') );
+    foreach my $key (sort keys %params)
+    {
+        if ( length($params{$key}) > 32)
+        {
+            $tbl->add('', 'cl', $key.' ', [ v::input_ta($key, $params{$key}, 60, 4) ]);
+        }
+        else
+        {
+            $tbl->add('*', 'cl', $key.' ', [ v::input_t(name=>$key, value=>$params{$key}, size=>16) ], );
+        }
+    }
+    $tbl->add('', 'rl',[ v::input_t(name=>'key0', value=>'', size=>10) ], [ v::input_t(name=>'value0', value=>'', size=>20) ], );
+    $tbl->add('', 'rl',[ v::input_t(name=>'key1', value=>'', size=>10) ], [ v::input_t(name=>'value1', value=>'', size=>20) ], );
+    $tbl->add('', 'rl',[ v::input_t(name=>'key2', value=>'', size=>10) ], [ v::input_t(name=>'value2', value=>'', size=>20) ], );
 
     if( $d->chk_priv('priv_edit') )
     {
@@ -173,29 +198,78 @@ sub o_show
 sub o_update
 {
     my($d) = @_;
+    my %data = %{$ses::input_orig};
+    delete $data{a}; delete $data{op}; delete $data{act}; delete $data{id};
 
-    $d->{sql} .= 'SET name=?, vendor=?, model=?, firmware=?, ip=?, snmp_port=?, ro_comunity=?, rw_comunity=?, pon_type=?, mng_tmpl=?, descr=?, enable=?, changed=UNIX_TIMESTAMP()';
 
-    push @{$d->{param}}, v::trim(ses::input('name'));
-    push @{$d->{param}}, ses::input('vendor');
-    push @{$d->{param}}, ses::input('model');
-    push @{$d->{param}}, ses::input('firmware');
+    $d->{sql} .= 'SET name=?, vendor=?, model=?, firmware=?, ip=?, snmp_port=?, ro_comunity=?, rw_comunity=?, pon_type=?, mng_tmpl=?, descr=?, enable=?, param=?, changed=UNIX_TIMESTAMP()';
 
-    push @{$d->{param}}, v::trim(ses::input('ip'));
-    push @{$d->{param}}, ses::input_int('snmp_port');
-    push @{$d->{param}}, ses::input('ro_comunity');
-    push @{$d->{param}}, ses::input('rw_comunity');
+    push @{$d->{param}}, delete $data{name};
+    push @{$d->{param}}, delete $data{vendor};
+    push @{$d->{param}}, delete $data{model};
+    push @{$d->{param}}, delete $data{firmware};
 
-    push @{$d->{param}}, ses::input('pon_type');
-    push @{$d->{param}}, ses::input_int('mng_tmpl');
+    push @{$d->{param}}, delete $data{ip};
+    push @{$d->{param}}, delete $data{snmp_port};
+    push @{$d->{param}}, delete $data{ro_comunity};
+    push @{$d->{param}}, delete $data{rw_comunity};
 
-    push @{$d->{param}}, v::trim(ses::input('descr'));
-    push @{$d->{param}}, ses::input_int('enable');
+    push @{$d->{param}}, delete $data{pon_type};
+    push @{$d->{param}}, delete $data{mng_tmpl};
+
+    push @{$d->{param}}, v::trim(delete $data{descr});
+    push @{$d->{param}}, delete $data{enable};
+
+    for my $kk (0..2)
+    {
+        my $key = defined $data{'key'.$kk} ? delete $data{'key'.$kk} : '';
+        $key =~ s/\s//g;
+        my $value = defined $data{'value'.$kk} ? delete $data{'value'.$kk} : '';
+        next if $key eq '' || $value eq '';
+        $data{$key} = $value;
+    }
+    foreach my $key (sort keys %data)
+    {
+         delete $data{$key} if !$data{$key};
+    }
+
+    my $param = Debug->dump(\%data);
+    debug $param;
+    push @{$d->{param}}, $param;
 }
 
 sub o_insert
 {
     return o_update(@_);
+}
+
+sub o_predel
+{
+    my($d) = @_;
+    $d->chk_priv('priv_edit') or $d->error_priv();
+    $d->o_getdata();
+    $d->o_edit();
+    $d->{no_delete} && Error(L('Удаление [] заблокировано системой, поскольку []', $d->{name_full}, $d->{no_delete}));
+
+    ses::input_int('now') or Error(
+        _('[] [][hr space][div h_center]',
+            L('Удаление'), $d->{name_full}, '', $d->{url}->form(op=>'del', id=>$d->{id}, now=>1, v::submit($lang::btn_Execute))
+        )
+    );
+
+    my $ok = Db->do_all(
+        [ "DELETE FROM $d->{table} WHERE $d->{field_id}=? LIMIT 1", $d->{id} ],
+        [ "INSERT INTO changes SET act='delete', new_data='', time=UNIX_TIMESTAMP(), tbl=?, fid=?, adm=?, old_data=?",
+            $d->{table}, $d->{id}, Adm->id, Debug->dump($d->{d}) ],
+    );
+    if ( $ok ) {
+        Db->do("DELETE FROM pon_bind WHERE olt_id=? ", $d->{id} );
+        Db->do("DELETE FROM pon_fdb WHERE olt_id=? ", $d->{id} );
+    }
+    $ok or Error(L('Удаление [] НЕ выполнено.', $d->{name_full}));
+    $d->o_postdel();
+    my $made_msg = $d->{del_made_msg} || L('Удаление [] выполнено', $d->{name_full});
+    $d->{url}->redirect(op=>'list', -made=>$made_msg);
 }
 
 1;

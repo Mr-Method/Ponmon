@@ -148,8 +148,6 @@ sub pon_edit
     my $domid2 = v::get_uniq_id();
     my $dereg_btn = [ url->a('Dereg', a=>'ajOnuMenu', bid=>$p{id}, domid=>$domid2, -ajax=>1) ];
     my $reset_btn = [ url->a('Reboot', a=>'ajOnuMenu', bid=>$p{id}, domid=>$domid2, -ajax=>1) ];
-    ToLeft MessageWideBox( Get_list_of_stat_days('Z', $url, $Ftm_stat) );
-
     my ($s, $t, $v) = split /\:/, $p{status};
     $tblc->add( $v ? '*' : 'rowoff', [
         # [ '',           L('OLT'),         $pon{olt}{$p{olt_id}}{name} ],
@@ -161,10 +159,12 @@ sub pon_edit
         # [ 'l',          L('LAST ERR'),    $p{dereg} ],
         [ '',           L('LAST CHANGE'), the_time($p{changed}) ],
         [ '',           '',               $graph_btn ],
+        [ 'h_center', '', $p{id}>0 ? [ url->a( L('Дополнительно'), a=>'ajOnuMenu', 'bid'=>$url->{bid}, act=>'menu', '-data-ajax-into-here'=>1) ] : '' ],
     ]);
     debug('pre', \%p);
 
     Show v::tag('div', id=>'a_onu_graph', -body=>'');
+    Show WideBox( msg=>Get_list_of_stat_days('Z', $url, $Ftm_stat), title=>L('Графіки') );
     Show WideBox( msg=>$tblc->show, title=>L('BIND info') );
 
     my $tblr = tbl->new( -class=>'td_ok pretty wide_input' );
@@ -224,6 +224,8 @@ sub Get_list_of_stat_days
     my $list_of_days = '';
     my $t1 = 0;
     my $t2 = 0;
+    my %dates = ();
+    my $i = 1;
     foreach my $time ( sort {$b <=> $a} keys %days )
     {
         my $t = localtime($time);
@@ -234,13 +236,15 @@ sub Get_list_of_stat_days
         {
             $t1 = $mon;
             $t2 = $year;
-            $list_of_days .= _('[p]&nbsp;', $lang::month_names[$mon+1].' '.($year+1900).':');
+            $i++;
+            $dates{$i}{month} = $lang::month_names[$mon+1].' '.($year+1900).':';
         }
-        #$list_of_days .= $url->a( $day, tm_stat=>$time, -active=>$sel_time eq "$day.$mon.$year" );
-        $list_of_days .= url->a( $day, a=>'ajOnuGraph', bid=>ses::input_int('bid'), tm_stat=>$time, -ajax=>1 );
-        $list_of_days .= $day==11 || $day==21? '<br>&nbsp;' : ' ';
+        $dates{$i}{days} .= url->a( $day, a=>'ajOnuGraph', bid=>ses::input_int('bid'), tm_stat=>$time, -ajax=>1 ).'&nbsp;';
     }
-    return $list_of_days;
+    foreach my $month ( sort keys %dates ) {
+        $list_of_days .= _('[dt]', $dates{$month}{month} ."\t". $dates{$month}{days});
+    }
+    return _('[dl]', $list_of_days );
 }
 
 sub pon_help {}
