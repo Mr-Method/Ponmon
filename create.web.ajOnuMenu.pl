@@ -1,71 +1,171 @@
 #<ACTION> file=>'web/ajOnuMenu.pl',hook=>'new'
-# ------------------- NoDeny ------------------
-# Created by Redmen for http://nodeny.com.ua
-# http://forum.nodeny.com.ua/index.php?action=profile;u=1139
+# -------------------------- NoDeny --------------------------
+# Created by Redmen for NoDeny (https://nodeny.com.ua)
+# https://forum.nodeny.com.ua/index.php?action=profile;u=1139
 # https://t.me/MrMethod
-# ---------------------------------------------
+# ------------------------------------------------------------
+# Info: ONU Menu
+# NoDeny revision: 715
+# Updated date: 2025.08.20
+# ------------------------------------------------------------
 use strict;
 
-sub go
-{
-    my $domid = ses::input('domid');
-    ajSmall_window($domid, _proc($_[0], $domid));
+my @cmd_list = ();
+my $ajax_url;
+
+my $debug = 0;
+my $domid;
+
+sub go {
+    $domid = ses::input('domid');
+    ajSmall_window($domid, _proc($_[0]));
+    debug('pre', \@cmd_list) if scalar @cmd_list;
 }
 
-sub _proc
-{
-    my($Url, $domid) = @_;
+sub _proc {
+    my ($Url) = @_;
+
     my $bid = ses::input_int('bid');
-    my %p = Db->line('SELECT b.*, olt.vendor, olt.mng_tmpl, olt.ip, olt.name, olt.pon_type '.
-        'FROM `pon_bind` b LEFT JOIN pon_olt olt ON (b.olt_id=olt.id) WHERE b.id=?', $bid );
-
-    Db->ok or return $lang::err_try_again;
-    %p or return L('ONU с bid=[] не найден', $bid);
-    debug('pre', \%p);
-
     my $admin = Adm->chk_privil('SuperAdmin') || Adm->chk_privil('Admin') || Adm->chk_privil(1204);
     $admin or return $lang::err_no_priv;
-    my $ajax_url = $Url->new(bid=>$bid, domid=>$domid, -ajax=>1);
+    my %p = Db->line(
+        'SELECT b.*, olt.vendor, olt.ip, olt.name AS olt_name, olt.pon_type, olt.param, olt.model '.
+        'FROM `pon_bind` b LEFT JOIN pon_olt olt ON (b.olt_id=olt.id) WHERE b.id=?', $bid
+    );
+    Db->ok or return $lang::err_try_again;
+    %p or return L('ONU с bid=[] не найден', $bid);
+    $p{cfg} = Debug->do_eval($p{param});
+    delete $p{param};
+    debug('pre', \%p);
+    $ajax_url = $Url->new(bid=>$bid, domid=>$domid, -ajax=>1);
+    return L('No defined OLT param') if ref $p{cfg} ne 'HASH' ;
 
     my $act = ses::input('act');
+    $main::{'act_'.$act}->(\%p) || "";
+}
 
-    if( $act eq 'menu' )
-    {
-        my $menuTitle = "<h3>Тут поки що немає нічого цікавого :)</h3>";
-        my $buttons = '';
-        $buttons .= _('[p]', $ajax_url->a(L('Clear FDB cache'), act=>'clearFdb') ) if Adm->chk_privil(1204);
+sub act_onu_menu {
+    my ($Url, $bid) = @_;
+    my @menuItems = ();
+
+    my %p = Db->line(
+        'SELECT b.*, olt.vendor, olt.ip, olt.name AS olt_name, olt.pon_type, olt.param, olt.model '.
+        'FROM `pon_bind` b LEFT JOIN pon_olt olt ON (b.olt_id=olt.id) WHERE b.id=?', $bid
+    );
+    Db->ok or return \@menuItems;
+    $p{cfg} = Debug->do_eval($p{param});
+    debug('pre', \%p);
+    delete $p{param};
+    return \@menuItems if ref $p{cfg} ne 'HASH';
+
+    if (Adm->chk_privil('SuperAdmin') || Adm->chk_privil(1201)) { # allow macs view
+
+#<HOOK>menu_macs
+
+    }
+    if (Adm->chk_privil('SuperAdmin') || Adm->chk_privil(1202)) { # allow bind view
+
+#<HOOK>menu_bind
+
+    }
+    if (Adm->chk_privil('SuperAdmin') || Adm->chk_privil(1203)) { # allow onu reboot
+
+#<HOOK>menu_reboot
+
+    }
+    if (Adm->chk_privil('SuperAdmin') || Adm->chk_privil(1204)) { # allow onu settings
+
+#<HOOK>menu_settings
+
+    }
+    if (Adm->chk_privil('SuperAdmin') || Adm->chk_privil(1205)) { # allow olt terminal
+
+#<HOOK>menu_terminal
+
+    }
+    if (Adm->chk_privil('SuperAdmin')) {
+
+#<HOOK>menu_super
+
+    }
 
 #<HOOK>menu
 
-        return Show _('[div]', $buttons);
+    my @menu = ();
+    my $ajax_url = $Url->new(a=>'ajOnuMenu', bid=>$bid, '-data-ajax-into-here'=>1);
+    foreach my $item (sort { $a->{order} <=> $b->{order} } @menuItems) {
+        my $domid = v::get_uniq_id();
+        my $link = $ajax_url->a($item->{title}, act=>$item->{act}, exists $item->{param} && map { $_ => $item->{param}{$_}, } keys %{$item->{param}}, '-data-ajax-into-here'=>1);
+        push @menu, _("[div id=$domid]", $link);
     }
-    $main::{'act_'.$act}->(\%p);
+    debug 'pre', \@menu;
+    return \@menu;
 }
 
-sub _document
-{
-    my $mng_tmpl = shift;
-    my %settings = ();
-    return \%settings if !$mng_tmpl;
-    my %p = Db->line('SELECT document FROM documents WHERE id=? AND is_section=0', $mng_tmpl );
-    %p or return \%settings;
-    $p{document} =~ s/\r//gm;
-    foreach my $line( split /\n/, $p{document} ) {
-        chomp($line);
-        $line =~ /([^=\s]+)\s*=\s*(.+)/ or next;
-        $settings{$1} = $2;
-    }
-    chomp(%settings);
-#    debug( 'pre', \%settings);
-    return \%settings;
+# sub act_test {
+#     my $attr = shift;
+#     debug('pre', $attr);
+#     my $form = _('[p][p][p]', L('Enter vlan id'), v::tag('input', type=>'number', name=>'vlan', value=>'0', size=>16, min=>1, max=>4095, 'required'), v::submit($lang::btn_Execute));
+#     return $ajax_url->form(-class=>'ajax', act=>'test', -method=>'post', $form) unless (ses::input_int('vlan'));
+#     return $ajax_url->a($lang::btn_Execute, act=>'test', go=>1) unless ses::input_int('go');
+#     return "Видалено 100500 записів";
+# }
+
+sub _load_module {
+    my $name = shift;
+    $name = ucfirst(lc($name));
+    debug "$cfg::dir_home/nod/Pon/$name.pm";
+    eval{ require "$cfg::dir_home/nod/Pon/_$name.pm" };
+    my $err = "$@";
+    debug 'error', $err if $err && -e "$cfg::dir_home/nod/Pon/_$name.pm";
+    $err && eval{ require "$cfg::dir_home/nod/Pon/$name.pm" };
+    return "$@";
 }
 
-sub act_clearFdb
-{
+sub _telnetConnect {
     my $attr = shift;
-    debug('pre', $attr);
-    Db->do("DELETE from pon_fdb WHERE llid=? AND olt_id=?", $attr->{llid}, $attr->{olt_id});
-    return "Видалено ".Db->rows." записів";
+    my $module = ucfirst(lc($attr->{vendor}));
+    if (my $err = _load_module($module)) {
+        tolog("ERROR: OLT id $attr->{id} ===>\t $err");
+        exit;
+    }
+    my $pkg = "nod::Pon::$module";
+    my $olt = $pkg->new($attr);
+    my $tnc = $olt->telnet_connect();
+    $tnc->input_log(*STDOUT)  if $debug;
+    $tnc->output_log(*STDOUT) if $debug;
+    return $tnc;
+}
+
+sub _telnetClose {
+    my $tc = shift;
+    no warnings;
+    eval {
+        $tc->close();
+        $tc->shutdown(2) if $tc;
+        undef $tc;
+    };
+}
+
+sub _tnCmd {
+    my ($tc, $cmd) = @_;
+    my $pt = $tc->last_prompt();
+    $pt =~ s/^\s*|\s*$//mg;
+    my @output = ();
+    if (ref $cmd eq "HASH") {
+        $cmd->{Output} = \@output;
+        $tc->cmd(%$cmd)
+    } else {
+        $tc->cmd(String => $cmd, Output => \@output);
+    }
+    push @cmd_list, $pt.' '.$tc->last_cmd;
+    return (@output);
+}
+
+sub _tnError {
+    my ($tc, $msg) = @_;
+    _telnetClose($tc);
+    return ($msg);
 }
 
 #### Battons handlers ####

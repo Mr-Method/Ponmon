@@ -1,11 +1,15 @@
 CREATE TABLE IF NOT EXISTS `pon_onu` (
-  `id` mediumint(7) UNSIGNED NOT NULL AUTO_INCREMENT,
-  `sn` char(32) NOT NULL,
-  `vendor` char(64) NOT NULL DEFAULT '',
-  `model` char(24) NOT NULL DEFAULT '',
-  `firmware` char(24) NOT NULL DEFAULT '',
+  `id` mediumint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `sn` varchar(32) NOT NULL,
+  `vendor` varchar(64) DEFAULT NULL,
+  `model` varchar(24) DEFAULT NULL,
+  `firmware` varchar(24) DEFAULT NULL,
+  `place_type` varchar(16) DEFAULT NULL,
+  `place` varchar(32) DEFAULT NULL,
   `descr` char(255) NOT NULL DEFAULT '',
-  `changed` int(11) NOT NULL DEFAULT '0',
+  `changed` int NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `sn` (`sn`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='ONU list';
+  UNIQUE KEY `sn` (`sn`),
+  KEY `place_type` (`place_type`),
+  KEY `place` (`place`)
+) ENGINE=InnoDB COMMENT='ONU list';

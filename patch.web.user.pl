@@ -1,39 +1,7 @@
-#<ACTION> file=>'web/user.pl',hook=>'additional_info'
+#<ACTION> file=>'web/user.pl',hook=>'ponmon_info'
 
- if( Adm->chk_privil('SuperAdmin') || Adm->chk_privil('1201') )
- {
-    my $db = Db->sql(
-        "SELECT b.*, f.ip, f.mac, f.name AS fname, o.name AS oname, o.pon_type FROM pon_bind b ".
-        "LEFT JOIN pon_fdb f ON (b.olt_id=f.olt_id AND b.llid=f.llid ) ".
-        "LEFT JOIN pon_olt o ON (o.id=f.olt_id ) WHERE uid=?", $Fuid
-    );
-
-#    if (!$db->rows) # && defined cfg _mac_onu_client dopfield
-#    {
-#        my %x = Db->line("SELECT _mac_onu_client as onu_sn FROM data0 WHERE uid=?", $Fuid);
-#        my $o_sn = uc($x{onu_sn}) || '';
-#        my $o_mac = $o_sn;
-#        $o_mac =~ s/(..)(?=.)/$1:/g if $o_mac !~ m/:/;
-#        $db = Db->sql("SELECT *, '' as ip FROM pon_bind WHERE sn=? or sn=?", $o_sn, $o_mac);
-#    }
-
-    my $tbl = tbl->new( -class=>'td_medium td_ok width100' );
-    while( my %p = $db->line )
-    {
-        my $info = (Adm->chk_privil('SuperAdmin') || Adm->chk_privil('1202')) ?
-            [ url->a('INFO', a=>'ponmon', act=>'edit', bid=>$p{id}, -class=>'nav') ] : '';
-        my ($s, $t, $v) = split /\:/, $p{status};
-
-        $tbl->add( $v ? '*' : 'rowoff', [
-            [ '',           '',                     $info ],
-            [ '',           L('MAC').'/'.L('IP'),   [_('[dl]', _('[dt][dt]', $p{mac},$p{ip}))] ],
-            [ '',           L('OLT'),               $p{oname}.' ' ],
-            [ '',           L('ONU'),               [_('[dl]', _('[dt][dt]', $p{sn},$p{fname}))] ],
-            [ '',           L('dBm'),               [_('[dl]', _('[dt][dt]', L('RX').': '.$p{rx},L('TX').': '.$p{tx}))] ],
-            [ '',           L('Status'),            "$t($s) " ],
-            [ '',           L('Updated'),           the_time($p{changed}) ],
-        ]);
+    if (Adm->chk_privil(1201)) {
+        Require_web_mod('ajUserOnu');
+        my $domid = v::get_uniq_id();
+        push @left, _("[div id=$domid]", _proc_user_onu($Url, $Fuid, $domid)) . $Url->a('', a=>'ajUserOnu', uid=>$Fuid, '-data-domid'=>$domid, -ajax=>1);
     }
-    #Show WideBox( msg=>$tbl->show, title=>L('PON') );
-    push @left, WideBox( msg=>$tbl->show, title=>L('PON') ) if $db->rows; # unshift
- }

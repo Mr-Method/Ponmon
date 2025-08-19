@@ -1,14 +1,15 @@
 CREATE TABLE IF NOT EXISTS `pon_fdb` (
   `mac` char(18) NOT NULL,
-  `vlan` smallint(4) NOT NULL,
+  `vlan` smallint NOT NULL,
   `llid` char(16) NOT NULL,
-  `olt_id` smallint(4) NOT NULL,
-  `name` varchar(32) NOT NULL DEFAULT '',
-  `uid` int(10) DEFAULT NULL,
-  `ip` char(16) DEFAULT NULL,
-  `time` int(11) NOT NULL DEFAULT '0',
-  UNIQUE KEY `mac` (`mac`)
+  `olt_id` smallint NOT NULL,
+  `name` varchar(32) DEFAULT NULL,
+  `uid` int DEFAULT NULL,
+  `time` int NOT NULL DEFAULT '0',
+  PRIMARY KEY (`mac`),
   KEY `llid` (`llid`),
   KEY `name` (`name`),
-  KEY `ip` (`ip`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='FDB cache';
+  KEY `olt_id` (`olt_id`),
+  KEY `vlan` (`vlan`),
+  KEY `uid` (`uid`)
+) ENGINE=InnoDB COMMENT='FDB cache';

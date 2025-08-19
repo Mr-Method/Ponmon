@@ -1,13 +1,16 @@
 #<ACTION> file=>'web/ponmon.pl',hook=>'new'
-# ------------------- NoDeny ------------------
-# Created by Redmen for http://nodeny.com.ua
-# http://forum.nodeny.com.ua/index.php?action=profile;u=1139
+# -------------------------- NoDeny --------------------------
+# Created by Redmen for NoDeny (https://nodeny.com.ua)
+# https://forum.nodeny.com.ua/index.php?action=profile;u=1139
 # https://t.me/MrMethod
-# ---------------------------------------------
+# ------------------------------------------------------------
+# Info: PON monitor web interface
+# NoDeny revision: 715
+# Updated date: 2025.08.20
+# ------------------------------------------------------------
 use strict;
 use Debug;
 
-use JSON;
 use Time::Local;
 use Time::localtime;
 
@@ -25,67 +28,82 @@ my %pon = (
     },
 );
 
-my $totop = 'PON monitor';
+my $super_priv = Adm->chk_privil('SuperAdmin') && $ses::auth->{trust};
 
-sub go
-{
-    my($Url) = @_;
-    my $super_priv = Adm->chk_privil('SuperAdmin') && $ses::auth->{trust};
+sub go {
+    my ($Url) = @_;
+    Doc->template('top_block')->{title} = 'PON monitor';
     my %subs = (
-       list        => 1,    # просмотр карточек
-       edit        => 1,
-       del         => 1,
-       help        => 1,
+        list => 1,
+        edit => 1,
+        del  => 1,
     );
 
-    my $act = ses::input('act');
-
-    $act = 'help' if ! $subs{$act};
+    my $act = ses::input('act') || 'list';
+    $act = 'list' if !$subs{$act};
     $Url->{act} = $act;
     my $menu = '';
+    my @ols_list;
     my $db = Db->sql('SELECT o.*, (SELECT COUNT(*) FROM pon_bind WHERE olt_id = o.id) AS binds FROM pon_olt o ORDER BY o.id ASC');
     my $counto = 0;
-    while( my %p = $db->line )
-    {
+    while (my %p = $db->line) {
         $pon{olt}{$p{id}}=\%p;
-        $menu .= $Url->a("$p{name} ($p{vendor}-$p{model}): $p{binds}", act=>'list', olt=>$p{id} );
+        $menu .= $Url->a("$p{name} ($p{vendor}-$p{model}): $p{binds}", act=>'list', olt=>$p{id});
         $counto += $p{binds};
+        push @ols_list, $p{id}, "$p{name} ($p{vendor}-$p{model}): $p{binds}";
     }
-    $menu = $Url->a("All OLT: $counto", act=>'list', olt=>0 )."<hr>" .$menu ."<hr>";
-    $menu .= $Url->a("Manage OLTs", act=>'pon_olt', a=>'op' );
-    $menu && ToLeft Menu($menu);
-    # my $search_block = '';
-    ToLeft Menu($Url->form( act=>'list',
-        [
-            {type => 'text', value => ses::input('sn'), name => 'sn', title => 'onu sn'},
-            {type => 'submit', value => 'search'},
-        ]
-    ));
+    unshift @ols_list, 0, "Всі OLT: $counto";
+    $menu = $Url->a("Всі OLT: $counto", act=>'list', olt=>0)."<hr>" .$menu;
+    my $olt=ses::input_int('olt') || 0;
 
-    $main::{'pon_'.$act}->($Url, $act, $super_priv);
+    Doc->template('top_block')->{title} = _('PON monitor:: OLT: [bold]', $pon{olt}{$olt}{name}) if $olt;
+
+    my @form;
+    push @form, _('[]', '&nbsp;'.v::select(name => 'olt',     options => \@ols_list, selected => $olt, onchange=>"this.form.submit()").'&nbsp;');
+    push @form, _('[]', '&nbsp;'.v::input_t(name => 'sn',     size => 20, value => ses::input('sn'),     placeholder => L('Серійний номер'), autofocus=>'autofocus').'&nbsp;');
+    push @form, _('[]', '&nbsp;'.v::input_t(name => 'branch', size => 10, value => ses::input('branch'), placeholder => L('Гілка')).'&nbsp;');
+    push @form, _('[]', '&nbsp;'.v::submit('Пошук'));
+    my $search_form = $Url->form(act=>'list', -method => 'get', join '', @form);
+
+    my @menu;
+    {
+        $super_priv or last;
+        push @menu, $Url->a(L('Налаштування OLT'), act=>'pon_olt', a=>'op');
+
+#<HOOK>top_menu
+
+    }
+    my $top_menu = _('[div nav]', join '', @menu);
+
+    Doc->template('base')->{top_lines} .= _('[style]', '#content_block{display: flex;justify-content: space-between}#main_block{padding: 5px 2px;flex-grow: 1;align-self: stretch;width: auto}#right_block,#left_block{padding: 0 10px;width: auto;max-width: clamp(250px, 30vw, 400px);word-wrap: break-word}@media screen and (max-width: 700px){#content_block{flex-direction: column}#main_block{order: 1;width: auto}#left_block,#right_block{width: auto;max-width: unset}}');
+    Doc->template('base')->{top_lines} .= _('[div top_msg]', _('[div style=display:flex;justify-content:space-between;]', $search_form . $top_menu));
+    # Show _('[style]', '.blur_text{filter: blur(2px);text-shadow: 0 0 4px rgba(0, 0, 0, 1.5);color: transparent}'); # for screenshots
+
+    $main::{'pon_'.$act}->($Url, $act);
 }
 
 # =====================================
 #    Список
 # =====================================
-sub pon_list
-{
-    my($Url, $act, $super_priv) = @_;
-    $totop .= ': list';
+sub pon_list {
+    my ($Url, $act) = @_;
+    Doc->template('top_block')->{title} = 'PON monitor::LIST';
 
-    my $sql = ['SELECT * FROM pon_bind WHERE 1 '];
+    my $sql   = ['SELECT * FROM pon_bind WHERE 1 '];
+    my $sqlcc = ['SELECT COUNT(*) AS cc, `status` FROM `pon_bind` WHERE 1 '];
+
     my $olt=ses::input_int('olt') || 0;
 
-    if( $olt )
-    {
+    if ($olt) {
         $sql->[0] .= " AND olt_id=?";
+        $sqlcc->[0] .= " AND olt_id=?";
         push @$sql, $olt;
+        push @$sqlcc, $olt;
         $Url->{olt} = $olt;
-        $totop = _('[] OLT ID: [bold]', $totop, $olt);
+        Doc->template('top_block')->{title} = _('PON monitor::LIST OLT: [bold]', $pon{olt}{$olt}{name});
     }
 
-    if( defined ses::input('sn'))
-    {
+    if (defined ses::input('sn') && ses::input('sn') ne '') {
         my $sn = Db->filtr(uc(ses::input('sn')));
         my $mac = $sn;
         $mac =~ s/[-:\.]//g;
@@ -94,119 +112,163 @@ sub pon_list
         $Url->{sn} = $sn;
     }
 
-    my $tbl = tbl->new( -class=>'td_wide pretty width100' );
+    if (defined ses::input('branch') && ses::input('branch') ne '') {
+        my $branch = Db->filtr(lc(ses::input('branch')));
+        $sql->[0] .= " AND name LIKE '%".$branch."%'";
+        $Url->{branch} = $branch;
+    }
+
+    my %orders = (
+        'rx'      => { title => L('RX') },
+        'tx'      => { title => L('TX') },
+        'sn'      => { title => L('Серійний номер') },
+        'status'  => { title => L('Статус') },
+        'name'    => { title => L('Гілка') },
+        'changed' => { title => L('Оновлено') },
+    );
+
+    my $order = ses::input('order');
+    my $order_up = ses::input_int('order_up');
+    $order = $orders{$order} ? $order : 'id';
+    $Url->{order} = $order;
+    $Url->{order_up} = $order_up;
+
+    $sql->[0] .= ' ORDER BY '.$order;
+    $sql->[0] .= $order_up ? ' ASC':' DESC';
+
     my ($sql, $page_buttons, $rows, $db) = main::Show_navigate_list($sql, ses::input_int('start'), 50, $Url);
 
-    if( $rows < 1 )
-    {
-        Show main::Box( msg=>'По фильтру onu не найдены' , css_class=>'big bigpadding');
+    if ($rows < 1) {
+        Show main::Box(msg=>L('По фільтру нічого не знайдено'), css_class=>'big bigpadding');
         return;
+    } else {
+        Doc->template('top_block')->{add_info} .= L('найдено: []', $rows);
     }
-    while( my %p = $db->line )
-    {
-        #debug('pre', $onu);
-        #my $domid = v::get_uniq_id();
-        #my $info = [ url->a('info', a=>'ajOnu', oid=>$id, domid=>$domid, -ajax=>1) ];
 
+    my $tbl = tbl->new(-class=>'td_wide pretty width100', -head=>'head');
+
+    foreach my $ord (keys %orders) {
+        my $title = $orders{$ord}{title};
+        $title .= $order_up ? ' &uarr;' : ' &darr;' if $order eq $ord;
+        $orders{$ord}{header} = [ $Url->a([$title], order=>$ord, order_up=>!$order_up) ];
+    }
+
+    while (my %p = $db->line) {
         my ($s, $t, $v) = split /\:/, $p{status};
-        $tbl->add( $v ? '*' : 'rowoff', [
-            [ 'h_center',   L('Info'),        [ $Url->a('INFO', act=>'edit', bid=>$p{id}, -class=>'nav') ] ],
-            [ '',           L('OLT'),         $pon{olt}{$p{olt_id}}{name} ],
-            #[ '',           L('Имя'),          $p{name} ],
-            [ '',           L('sn'),          $p{sn} ],
-            #[ '',           L('Vendor'),       $onu->{vendor} ],
-            #[ '',           L('Model'),        $onu->{model} ],
-            [ '',           L('RX'),          $p{rx} ],
-            [ '',           L('TX'),          $p{tx} ],
-            #[ '',           L('Ver'),          $onu->{firmware} ],
-            [ '',           L('Status'),      "$t($s)" ],
-            [ '',           L('LAST ERR'),    $p{dereg} ],
-            [ '',           L('LAST CHANGE'), the_time($p{changed}) ],
-       ]);
+        $tbl->add($v ? '*' : 'rowoff', [
+            [ 'h_center', L('Info'),                [ $Url->a('INFO', act=>'edit', bid=>$p{id}, -class=>'nav') ] ],
+            [ '',         L('OLT'),                 $pon{olt}{$p{olt_id}}{name} ],
+            [ '',         $orders{name}{header},    $p{name} ],
+            [ '',         $orders{sn}{header},      $p{sn} ],
+            [ '',         $orders{rx}{header},      $p{rx} ],
+            [ '',         $orders{tx}{header},      $p{tx} ],
+            [ '',         $orders{status}{header},  "$t($s)" ],
+            [ '',         $orders{changed}{header}, the_time($p{changed}) ],
+#            [ 'h_center', '', [ $ses::debug && $Url->a('del', act=>'del', bid=>$p{id}) ] ],
+
+#<HOOK>list_buttons
+
+        ]);
     }
 
-    Doc->template('top_block')->{title} = $totop;
     Show $page_buttons.$tbl->show.$page_buttons;
+
+    {
+        my @param = ();
+        $sqlcc->[0] .= ' GROUP BY `status` ORDER BY `status`';
+        if (ref $sqlcc) {
+             @param = @$sqlcc;
+             $sql = shift @param;
+        }
+
+        my $counters = Db->sql(shift @$sqlcc, @$sqlcc);
+        my $tblcc = tbl->new(-class=>'td_wide pretty');
+        $tblcc->add('head', 'll', L('Статус'), L('Кількість'));
+        while (my %p = $counters->line) {
+            my ($s, $t, $v) = split /\:/, $p{status};
+            my $tbl = tbl->new(-class=>'td_wide pretty');
+            debug "$t $p{cc}";
+            $tblcc->add('*', 'll', $t, $p{cc});
+        }
+        ToLeft Menu($tblcc->show());
+    }
 }
 
-sub pon_edit
-{
-    my($Url, $act, $super_priv) = @_;
+sub pon_edit {
+    my ($Url, $act) = @_;
     my $url = $Url;
+
     my ($domid, $domid_uinfo) = (v::get_uniq_id(), v::get_uniq_id());
     my $fields = Data::fields->new(0, ['d'], { _adr_place => 1 });
     my @buttons = ();
+    my $user_field = Set_usr_field_line();
 
     my $Ftm_stat = ses::input_int('tm_stat') || $ses::t;
     $Ftm_stat = $ses::t if $Ftm_stat > 1956513600; # не больше 2032г. - мало ли как mysql поведет себя...
     $url->{tm_stat} = $Ftm_stat if ses::input_exists('tm_stat');
     $url->{bid} = ses::input_int('bid') if ses::input_exists('bid');
 
-    my %p = Db->line('SELECT b.*, o.vendor, o.model, o.firmware, o.descr FROM `pon_bind` b LEFT JOIN pon_onu o ON (b.sn=o.sn) WHERE b.id=?', ses::input('bid') );
-    my $tblc = tbl->new( -class=>'td_wide pretty' );
-
+    my %p = Db->line("SELECT * FROM `pon_bind` WHERE id=?", ses::input('bid'));
     my $domid2 = v::get_uniq_id();
-    my $dereg_btn = [ url->a('Dereg', a=>'ajOnuMenu', bid=>$p{id}, domid=>$domid2, -ajax=>1) ];
-    my $reset_btn = [ url->a('Reboot', a=>'ajOnuMenu', bid=>$p{id}, domid=>$domid2, -ajax=>1) ];
     my ($s, $t, $v) = split /\:/, $p{status};
-    $tblc->add( $v ? '*' : 'rowoff', [
-        # [ '',           L('OLT'),         $pon{olt}{$p{olt_id}}{name} ],
-        # [ '',           L('Имя'),         $p{name} ],
-        [ '',           L('sn'),          $p{sn} ],
-        [ '',           L('RX'),          $p{rx} ],
-        [ '',           L('TX'),          $p{tx} ],
-        [ '',           L('Status'),      "$t($s)" ],
-        # [ 'l',          L('LAST ERR'),    $p{dereg} ],
-        [ '',           L('LAST CHANGE'), the_time($p{changed}) ],
-        [ '',           '',               $graph_btn ],
-        [ 'h_center', '', $p{id}>0 ? [ url->a( L('Дополнительно'), a=>'ajOnuMenu', 'bid'=>$url->{bid}, act=>'menu', '-data-ajax-into-here'=>1) ] : '' ],
+    my $tblc = tbl->new(-class=>'td_wide pretty');
+    $tblc->add($v ? '*' : 'rowoff', [
+        [ '', L('Гілка'),    $p{name} ],
+        [ '', L('SN'),       $p{sn} ],
+        [ '', L('RX'),       $p{rx} ],
+        [ '', L('TX'),       $p{tx} ],
+        [ '', L('Статус'),   "$t($s)" ],
+        [ '', L('Оновлено'), the_time($p{changed}) ],
     ]);
     debug('pre', \%p);
 
-    Show v::tag('div', id=>'a_onu_graph', -body=>'');
-    Show WideBox( msg=>Get_list_of_stat_days('Z', $url, $Ftm_stat), title=>L('Графіки') );
-    Show WideBox( msg=>$tblc->show, title=>L('BIND info') );
+    Doc->template('top_block')->{title} = _('PON Monitor::SHOW OLT: [bold]: ONU: [bold]', $pon{olt}{$p{olt_id}}{name}, $p{sn}) if $p{id};
 
-    my $tblr = tbl->new( -class=>'td_ok pretty wide_input' );
+    my $graf_dates = Get_list_of_stat_days('Z', $url, $Ftm_stat);
+    Doc->template('base')->{document_ready} .= "\$.getScript('".$cfg::img_dir."/custom/highcharts.12.js')"  if $graf_dates;
+    Doc->template('base')->{top_lines} .= WideBox(
+        title => L('Графіки'),
+        msg => _("[][div id=a_onu_graph style='wide:auto;max-width:90vw']", $graf_dates, ''),
+    ) if $graf_dates;
 
-    $tblr->add('', 'll', [ v::input_t(name=>'name',     value=>$p{name}) ],     L('name'), );
-    $tblr->add('', 'll', [ v::input_t(name=>'vendor',   value=>$p{vendor}) ],   L('vendor'), );
-    $tblr->add('', 'll', [ v::input_t(name=>'model',    value=>$p{model}) ],    L('model'), );
-    $tblr->add('', 'll', [ v::input_t(name=>'firmware', value=>$p{firmware}) ], L('firmware'), );
-    $tblr->add('', 'll', [ v::input_ta(name=>'descr',   $p{descr}, 8, 2) ],     L('Комментар'), );
+    Show WideBox(msg=>$tblc->show.v::tag('div', id=>'a_onu_info', -body=>''), title=>L('BIND info'));
 
-    $tblr->add('', 'lL', [ $fields->get_field('_adr_place')->form(iname=>'place') ],            L('Точка топологии'), );
-    $tblr->add('v_top', 'lll',  [ v::tag('input', type=>'hidden',  name=>'client', value=>$p{client} || '',
-        id=>$domid, 'data-autoshow-userinfo'=>$domid_uinfo).v::tag('div', id=>$domid_uinfo) ],
-        [ url->a(L('С кем связано'), a=>'user_select', -separator=>'&', -class=>'new_window', '-data-parent'=>$domid) ], );
-
-    my $db = Db->sql('SELECT b.*, i.auth FROM pon_fdb b LEFT JOIN v_ips i ON (i.ip = b.ip) WHERE olt_id=? AND llid=?', $p{olt_id}, $p{llid} );
-    my $tbl = tbl->new( -class=>'td_wide pretty' );
-    while( my %p = $db->line )
-    {
-        #my $auth = $p{auth} ?  v::tag('img', src=>$cfg::img_url.'/on.gif') : '';
-        #my $col_auth = $p{state} eq 'on'? 'on.gif' : '';
-        my $auth = $p{auth} ? [ v::tag('img', src=>$cfg::img_url.'/on.gif') ] : '';
-        my $client = $p{uid} ? [ Show_usr_info($p{uid}, 'adr') ] : '';
-
-        $tbl->add( $v ? '*' : 'rowoff', [
-            [ '',           L('Клиент'),      $client ],
-            [ '',           L('mac'),         $p{mac} ],
-            [ '',           L('vlan'),        $p{vlan} ],
-            [ '',           '',               $p{auth} ? [ v::tag('img', src=>$cfg::img_url.'/on.gif') ] : ''  ],
-            [ '',           L('ip'),          $p{ip} ],
-            [ '',           L('LAST CHANGE'), the_time($p{time}) ],
-       ]);
+    if ($url->{bid}) {
+        Require_web_mod('ajOnuMenu');
+        my @menu = @{act_onu_menu($Url, $url->{bid})};
+        ToRight Box(wide=>1, css_class=>'navmenu', msg=>join('', @menu), title=>L('ONU меню')) if scalar @menu;
     }
 
-    Show WideBox( msg=>$tbl->show, title=>L('FDB CACHE') ) if $db->rows;
-    $totop = _('[]: OLT: [bold]: ONU: [bold]', $totop, $pon{olt}{$p{olt_id}}{name}, $p{sn});
-    Doc->template('top_block')->{title} = $totop;
+    if ($url->{bid} && int($cfg::ponmon_web_binds_block)) {
+        Require_web_mod('ajOnuPlace');
+        my $domid = v::get_uniq_id();
+        ToLeft _("[div id=$domid]", _proc_onu_place($Url, $p{sn}, $domid));
+    }
+
+    if ($url->{bid}) { # ponmon_onu_info_block
+        my $domid = v::get_uniq_id();
+        my $reload_url = url->new(a=>'ajOnuInfo', bid=>$url->{bid}, '-data-domid'=>$domid, -ajax=>1);
+        ToLeft _("[div id=$domid]", $reload_url->a('wait...', '-data-autosubmit'=>50));
+    }
+
+    if ($p{olt_id} && $p{llid}) {
+        my $domid = v::get_uniq_id();
+        my $reload_url = url->new(a=>'ajOnuFdb', olt_id=>$p{olt_id}, llid=>$p{llid}, '-data-domid'=>$domid, -ajax=>1);
+        Show _("[div id=$domid]", $reload_url->a('', '-data-autosubmit'=>50));
+    }
 }
 
-sub Get_list_of_stat_days
-{
-    my($tbl_type, $url, $sel_time) = @_;
+sub pon_del {
+    my ($Url, $act) = @_;
+    my $url = $Url;
+    $url->{bid} = ses::input_int('bid') if ses::input_exists('bid');
+    my $db = Db->do("DELETE FROM `pon_bind` WHERE `id` = ?", $url->{bid});
+    return;
+}
+
+sub Get_list_of_stat_days {
+    my ($tbl_type, $url, $sel_time) = @_;
+
     my $dbh = Db->dbh;
     my $sth = $dbh->prepare('SHOW TABLES');
     $sth->execute or return '';
@@ -215,8 +277,7 @@ sub Get_list_of_stat_days
     $sel_time = $t->mday.'.'.$t->mon.'.'.$t->year;
     debug("SHOW TABLES (Таблиц: ".$sth->rows.")");
     my %days;
-    while ( my $p = $sth->fetchrow_arrayref )
-    {
+    while (my $p = $sth->fetchrow_arrayref) {
         $p->[0] =~ /^z(\d\d\d\d)_(\d+)_(\d+)_pon$/i or next;
         my $time = timelocal(59,59,23,$3,$2-1,$1); # конец дня
         $days{$time} = substr('0'.$3,-2,2).'.'.substr('0'.$2,-2,2).'.'.$1;
@@ -226,27 +287,26 @@ sub Get_list_of_stat_days
     my $t2 = 0;
     my %dates = ();
     my $i = 1;
-    foreach my $time ( sort {$b <=> $a} keys %days )
-    {
+    foreach my $time (sort {$b <=> $a} keys %days) {
         my $t = localtime($time);
         my $day  = $t->mday;
         my $mon  = $t->mon;
         my $year = $t->year;
-        if( $t1 != $mon || $t2 != $year )
-        {
+        if ($t1 != $mon || $t2 != $year) {
             $t1 = $mon;
             $t2 = $year;
             $i++;
             $dates{$i}{month} = $lang::month_names[$mon+1].' '.($year+1900).':';
         }
-        $dates{$i}{days} .= url->a( $day, a=>'ajOnuGraph', bid=>ses::input_int('bid'), tm_stat=>$time, -ajax=>1 ).'&nbsp;';
+        $dates{$i}{days} .= url->a($day, a=>'ajOnuGraph', bid=>ses::input_int('bid'), tm_stat=>$time, -ajax=>1).'&nbsp;';
     }
-    foreach my $month ( sort keys %dates ) {
+    foreach my $month (sort keys %dates) {
         $list_of_days .= _('[dt]', $dates{$month}{month} ."\t". $dates{$month}{days});
     }
-    return _('[dl]', $list_of_days );
+    return keys %days ? _('[dl]', $list_of_days) : '';
 }
 
-sub pon_help {}
+#<HOOK>subs
+
 
 1;

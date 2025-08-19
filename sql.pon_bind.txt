@@ -1,16 +1,14 @@
 CREATE TABLE IF NOT EXISTS `pon_bind` (
-  `id` smallint(5) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id` int UNSIGNED NOT NULL AUTO_INCREMENT,
   `sn` char(18) NOT NULL,
-  `olt_id` smallint(4) NOT NULL,
+  `olt_id` smallint NOT NULL,
   `llid` char(16) NOT NULL,
   `name` char(32) NOT NULL DEFAULT '',
-  `user` int(10) NOT NULL DEFAULT '0',
-  `place` int(10) NOT NULL DEFAULT '0',
   `tx` char(6) DEFAULT NULL,
   `rx` char(6) DEFAULT NULL,
   `status` char(30) DEFAULT NULL,
   `dereg` char(24) DEFAULT NULL,
-  `changed` int(11) NOT NULL DEFAULT '0',
+  `changed` int NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq` (`olt_id`,`llid`) USING BTREE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='ONU binds';
+) ENGINE=InnoDB COMMENT='ONU binds';

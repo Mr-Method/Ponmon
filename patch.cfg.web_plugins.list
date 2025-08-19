@@ -1,5 +1,9 @@
 #<ACTION> file=>'cfg/web_plugins.list',hook=>'admin'
 
-ponmon          0       ponmon          PONMON
-ajOnuMenu       1       ajOnuMenu       ONU Двойной клик по карте
-ajOnuGraph      1       ajOnuGraph      ONU Получение объектов для карты
+ponmon          0       ponmon          PON monitoring
+ajOnuMenu       1       ajOnuMenu       ONU додаткові функції
+ajOnuInfo       1       ajOnuInfo       ONU Info
+ajOnuFdb        1       ajOnuFdb        ONU FDB Info
+ajOnuPlace      1       ajOnuPlace      ONU Розташування
+ajOnuGraph      1       ajOnuGraph      ONU Графіки сигналів
+ajUserOnu       1       ajUserOnu       ONU на клієнті
