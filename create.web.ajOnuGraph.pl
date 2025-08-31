@@ -6,7 +6,7 @@
 # ------------------------------------------------------------
 # Info: PON monitor ONU graph
 # NoDeny revision: 715
-# Updated date: 2025.08.20
+# Updated date: 2025.09.01
 # ------------------------------------------------------------
 use strict;
 use Time::localtime;
@@ -21,7 +21,7 @@ sub go {
 
 sub _proc_onu_list {
     my ($Url) = @_;
-    my $onu = ses::input_int('bid');
+    my $onu = ses::input('sn');
     my $time = ses::input_exists('tm_stat') ? ses::input_int('tm_stat') : $ses::t;
     my $title = the_date($time);
     my $_tbl_name_template = 'z%d_%02d_%02d_pon';
@@ -36,8 +36,26 @@ sub _proc_onu_list {
     my $series = [];
     my $min_y = 0;
 
-    Db->do("DELETE FROM $pon_tbl_name WHERE `rx` IS NULL AND `rx` IS NULL");
-    my $db = Db->sql("SELECT * FROM $pon_tbl_name WHERE bid=? ORDER BY time ASC", $onu);
+    my $DB;
+    if ($cfg::ponmon_db_name) {
+        my $timeout = $cfg::ponmon_db_timeout || 10;
+        my $db = Db->new(
+            host    => $cfg::ponmon_db_host,
+            user    => $cfg::ponmon_db_login,
+            pass    => $cfg::ponmon_db_password,
+            db      => $cfg::ponmon_db_name,
+            timeout => $timeout,
+            tries   => 2,
+            global  => 0,
+            pool    => [],
+        );
+        $db->connect;
+        $DB = $db if $db->is_connected;
+    }
+    $DB = Db->self unless $DB;
+
+    $DB->do("DELETE FROM $pon_tbl_name WHERE `rx` IS NULL AND `rx` IS NULL");
+    my $db = $DB->sql("SELECT * FROM $pon_tbl_name WHERE sn=? ORDER BY time ASC", $onu);
     my ($rx, $tx) = 0;
     while (my %p = $db->line) {
         #next if $p{rx} eq '';

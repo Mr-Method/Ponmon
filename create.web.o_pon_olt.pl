@@ -6,12 +6,14 @@
 # ------------------------------------------------------------
 # Info: PON monitor OLT management
 # NoDeny revision: 715
-# Updated date: 2025.08.20
+# Updated date: 2025.09.01
 # ------------------------------------------------------------
 # https://jsfiddle.net/mrMethod/k9paur0q/10
 package op;
 use strict;
 use Debug;
+
+$Data::Dumper::Sortkeys = 1;
 
 my $d = {
     name        => L('Сервери OLT'),
@@ -49,9 +51,26 @@ sub o_start {
         $module =~ s/^_?(.+)\.pm$/$1/ or next;
         $Modules{$module} = {};
     }
+
+    foreach my $module (sort keys %Modules) {
+        my $err = main::Require_mod("nod/Pon/$module.pm");
+        if ($err) {
+            debug 'error', $err;
+            next;
+        }
+        my $pkg  = "nod::Pon::$module";
+        my $info = $pkg->can('info') ? $pkg->info() : {};
+        debug('pre', $module, $info);
+        if (ref $info eq 'HASH' && ref $info->{pon_types} eq 'HASH') {
+            $Modules{$module} = { %$info };
+        } else {
+            delete $Modules{$module};
+            next;
+        }
+    }
     closedir $dh;
     keys %Modules or Error_Lang('Нет ни одного модуля вендора (файла *.pm) в каталоге: [filtr|p]', $cfg::dir_vendors);
-
+    $d->{modules} = \%Modules;
     return $d;
 }
 
@@ -69,14 +88,13 @@ sub o_list {
             [ 'h_right', 'id', $p{id} ],
             [ '', L('Увімкнено'), $enable_opt{$p{enable}} ],
             [ '', L('Имя'),       $p{name} ],
-            [ '', L('Вендор'),    $p{vendor} ],
-            [ '', L('Тип'),       $p{pon_type} ],
+            [ '', L('Вендор'),    $d->{modules}{$p{vendor}}{name} || $p{vendor} ],
+            [ '', L('Тип'),       $d->{modules}{$p{vendor}}{pon_type}{$p{pon_type}} || $p{pon_type} ],
             [ '', L('Model'),     $p{model} ],
             [ '', L('IP Адрес'),  $p{ip} ],
             [ '', L('SNMP порт'), $p{snmp_port} ],
             [ '', '',             $d->btn_edit($p{id}) ],
             [ '', '',             $d->btn_copy($p{id}) ],
-            [ '', '',             $d->btn_del($p{id}) ],
         ]);
     }
     Show $tbl->show;
@@ -85,6 +103,13 @@ sub o_list {
 sub o_new {
     my ($d) = @_;
     $d->{d}{param} = {};
+
+    $d->{d}{name} //= '';
+    $d->{d}{model} //= '';
+    $d->{d}{firmware} //= '';
+    $d->{d}{ip} //= '';
+    $d->{d}{snmp_port} //= 161;
+    $d->{d}{enable} //= 2;
 }
 
 sub o_edit {
@@ -106,35 +131,33 @@ sub o_show {
     push @menu, '<br>', url->a('help', a=>'help', theme=>'olt_params') if $edit_priv;
 
     my @vendorlist = ();
-    foreach my $key (sort keys %{$d->{_vendors}}) {
-        push @vendorlist, $key, $key;
+    foreach my $vendor (sort { $d->{modules}{$a}{name} =~ /old/i <=> $d->{modules}{$b}{name} =~ /old/i || $a cmp $b } keys %{$d->{modules}}) {
+        foreach my $ptype (sort keys %{$d->{modules}{$vendor}{pon_types}}) {
+            push @vendorlist, "$vendor:$ptype", "$d->{modules}{$vendor}{name}:$d->{modules}{$vendor}{pon_types}{$ptype}";
+        }
     }
 
-    my @pon_types = (
-        'epon','epon',
-        'gpon','gpon',
+    my $is_enable = exists $enable_opt{$d->{d}{enable}} ? $d->{d}{enable} : 0;
+    my $enabled = v::select(
+        name     => 'enable',
+        size     => 1,
+        options  => [map { $_ => $enable_opt{$_} } sort keys %enable_opt],
+        selected => $is_enable,
     );
 
-    my $pontype = v::select(
-        name     => 'pon_type',
-        #size     => 1,
-        options  => \@pon_types,
-        selected => $d->{d}{pon_type},
-    );
-
+    my $vendor_selected = $d->{d}{vendor} && $d->{d}{pon_type} ? "$d->{d}{vendor}:$d->{d}{pon_type}" : '';
     my $vendors = v::select(
         name     => 'vendor',
         size     => 1,
         options  => \@vendorlist,
-        selected => $d->{d}{vendor},
+        selected => $vendor_selected,
     );
 
-    $tbl->add('', 'll', L('Увімкнути'), [ v::checkbox( name=>'enable', value=>1, checked=>$d->{d}{enable}) ]);
+    $tbl->add('', 'll', L('Увімкнено'), [ $enabled ]);
     $tbl->add('', 'll', L('Назва'),     [ v::input_t(name=>'name', value=>$d->{d}{name}) ]);
     $tbl->add('', 'll', L('vendor'),    [ $vendors ]);
     $tbl->add('', 'll', L('model'),     [ v::input_t(name=>'model', value=>$d->{d}{model}) ]);
     $tbl->add('', 'll', L('firmware'),  [ v::input_t(name=>'firmware', value=>$d->{d}{firmware}) ]);
-    $tbl->add('', 'll', L('PON Тип'),   [ $pontype ]);
 
     $tbl->add('', 'll', L('IP'),        [ v::input_t(name=>'ip', value=>$d->{d}{ip}) ]);
     $tbl->add('', 'll', L('SNMP Port'), [ v::input_t(name=>'snmp_port', value=>$d->{d}{snmp_port}) ]) if $edit_priv;
@@ -183,15 +206,16 @@ sub o_update {
 
     $d->{sql} .= 'SET `name`=?, `vendor`=?, `model`=?, `firmware`=?, `ip`=?, `snmp_port`=?, `pon_type`=?, `descr`=?, `enable`=?, `param`=?, `changed`=UNIX_TIMESTAMP()';
 
+    my ($vendor, $ptype) = split /\:/, $data{vendor};
     push @{$d->{param}}, $data{name};
-    push @{$d->{param}}, $data{vendor};
+    push @{$d->{param}}, $vendor;
     push @{$d->{param}}, $data{model};
     push @{$d->{param}}, $data{firmware};
 
     push @{$d->{param}}, $data{ip};
     push @{$d->{param}}, $data{snmp_port} || 161;
 
-    push @{$d->{param}}, $data{pon_type} || 'gpon';
+    push @{$d->{param}}, $ptype || 'gpon';
 
     push @{$d->{param}}, v::trim($data{descr});
     push @{$d->{param}}, $data{enable} || 0;

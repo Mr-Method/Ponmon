@@ -6,7 +6,7 @@
 # ------------------------------------------------------------
 # Info: PON monitor user ONU
 # NoDeny revision: 715
-# Updated date: 2025.08.20
+# Updated date: 2025.09.01
 # ------------------------------------------------------------
 use strict;
 
@@ -25,7 +25,11 @@ sub _proc_user_onu {
     $err_msg && return $err_msg;
     my %onu_list = ();
     if (!scalar %onu_list) { # pon_fdb
-        my $db = Db->sql("SELECT b.*, f.mac, f.name AS fname FROM pon_bind b LEFT JOIN pon_fdb f ON (b.olt_id=f.olt_id AND b.llid=f.llid) WHERE f.uid=?", $uid);
+        my $db = Db->sql(
+            "SELECT b.*, f.mac, f.name AS fname FROM pon_bind b ".
+            "LEFT JOIN pon_fdb f ON (b.olt_id=f.olt_id AND b.llid=f.llid) ".
+            "WHERE f.uid=?", $uid
+        );
         # "LEFT JOIN pon_olt o ON (o.id=f.olt_id) LEFT JOIN pon_onu t ON (t.sn=b.sn) "
         while (my %p = $db->line) {
             foreach my $key (keys %p) {
@@ -35,7 +39,10 @@ sub _proc_user_onu {
         }
     }
     if (!scalar %onu_list) { # place user
-        my $db = Db->sql("SELECT b.*, o.sn FROM pon_onu o LEFT JOIN pon_bind b ON (b.sn=o.sn) WHERE o.place_type = 'user' AND o.place = ?", $uid);
+        my $db = Db->sql(
+            "SELECT b.*, o.sn FROM pon_onu o LEFT JOIN pon_bind b ON (b.sn=o.sn) ".
+            "WHERE o.place_type = 'user' AND o.place = ?", $uid
+        );
         # "LEFT JOIN pon_olt o ON (o.id=f.olt_id) LEFT JOIN pon_onu t ON (t.sn=b.sn) "
         while (my %p = $db->line) {
             $p{id} ||= 0;
@@ -75,8 +82,6 @@ sub _proc_user_onu {
             map { $onu_list{$p{sn}}{bid}{$p{id}}{data}{$_} = $p{$_} } keys %p;
         }
     }
-
-#HOOK
 
     return '' if !scalar %onu_list;
 
@@ -119,6 +124,9 @@ sub _proc_user_onu {
                 [ '',           L('MACs'),              [$macs] ],
             ]);
             $tblm->add($v ? '*' : 'rowoff', 'llll', $info, [$oname.'<hr>'.$sn], ["$t($s)".'<hr>'.$signal], [$time.'<hr>'.$macs]);
+
+#<HOOK>user_onu_table
+
         }
     }
     my $style = _('[style]', '@media (max-width:600px){.userOnuMobile{display:table}.userOnuDesktop{display:none}}@media (min-width:601px){.userOnuMobile{display:none}.userOnuDesktop{display:table}}');

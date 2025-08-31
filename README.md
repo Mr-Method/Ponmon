@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://stand-with-ukraine.pp.ua"><img src="https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg" alt="#StandWithUkraine" /></a>
+</p>
+
+[![Stand With Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner2-direct.svg)](https://vshymanskyy.github.io/StandWithUkraine/)
+
 # Модуль PON Monitor (Ponmon)
 
 Модуль моніторингу PON обладнання для білінгової системи [NoDeny Next](https://nodeny.com.ua/).

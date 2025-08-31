@@ -6,7 +6,7 @@
 # ------------------------------------------------------------
 # Info: PON monitor kernel
 # NoDeny revision: 715
-# Updated date: 2025.08.20
+# Updated date: 2025.09.01
 # ------------------------------------------------------------
 package kernel::ponmon;
 use strict;
@@ -16,9 +16,7 @@ use nod::tasks;
 
 use Time::Local;
 use Time::localtime;
-use Parallel::ForkManager;
 
-$SIG{CHLD} = 'IGNORE';
 our @ISA = qw{kernel};
 
 $Data::Dumper::Sortkeys = 1;
@@ -30,44 +28,98 @@ $cfg::_tbl_name_template = 'z%d_%02d_%02d_pon';
 # Таблица суточного мониторинга
 $cfg::_slq_create_zpon_table.=<<SQL;
 (
-  `bid` mediumint(7) NOT NULL,
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `sn` char(20) NOT NULL,
   `tx` char(6) DEFAULT NULL,
   `rx` char(6) DEFAULT NULL,
   `time` int(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
   KEY `time` (`time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 SQL
 
 my $step = 0;
 my %onu_list = ();
-my $period = int($cfg::k_ponmon_period) || 10;
-my $running_threads = int($cfg::k_ponmon_max_threads) || 10;
-my $history_period = int($cfg::k_ponmon_max_history) || 60;
+my $period;
+my $DB_graph;
 
 sub start {
     my (undef, $single, $config) = @_;
-    my %forks = ();
-    my $pm = Parallel::ForkManager->new($running_threads);
+    my $running_threads = int($cfg::k_ponmon_max_threads) || 4;
+    $config->{single_olt} ||= 0;
+    $config->{period}       = int($config->{single_olt}) ? 1 : int($cfg::k_ponmon_period) ? int($cfg::k_ponmon_period) * 60 : 600;
+    $config->{proc_name}    = int($config->{single_olt}) ? 'noponmon::' : 'nokernel::';
+    $config->{max_procs}    = int($config->{single_olt}) ? 1 : int($cfg::k_ponmon_max_threads) ? int($cfg::k_ponmon_max_threads) : 4;
+    #$config->{max_procs}    = 0 if ($single && $cfg::verbose);
 
-    nod::tasks->new(
-        task         => sub{ main($_[0], $single, $config, $pm, \%forks ) },
-        period       => $period * 60,
-        first_period => $single? 0 : $period * 60,
-    );
+    if ($cfg::ponmon_db_name) {
+        my $timeout = $cfg::ponmon_db_timeout || 10;
+        my $db = Db->new(
+            host    => $cfg::ponmon_db_host,
+            user    => $cfg::ponmon_db_login,
+            pass    => $cfg::ponmon_db_password,
+            db      => $cfg::ponmon_db_name,
+            timeout => $timeout,
+            tries   => 2,
+            global  => 0,
+            pool    => [],
+        );
+        $db->connect;
+        $DB_graph = $db if $db->is_connected;
+    }
+    $DB_graph = Db->self unless $DB_graph;
+    debug 'pre', $config;
+
+    my %forks = ();
+    my $pm = 0;
+    if (!$config->{single_olt}) {
+        # Видаляємо IGNORE - це конфліктує з Parallel::ForkManager
+        delete $SIG{CHLD};
+        require Parallel::ForkManager or die "You need install Perl module Parallel::ForkManager";
+        Parallel::ForkManager->import;
+        $pm = Parallel::ForkManager->new($config->{max_procs});
+        # Встановлюємо власний обробник SIGCHLD для Parallel::ForkManager
+        $pm->set_waitpid_blocking_sleep(0.1);
+        nod::tasks->new(
+            task         => sub{ main($_[0], $single, $config, $pm, \%forks) },
+            period       => $config->{period},
+            first_period => $single ? 0 : 6,
+        );
+    } else {
+        nod::tasks->new(
+            task         => sub{ single($_[0], $single, $config) },
+            period       => 30,
+            first_period => $single ? 0 : 6,
+        );
+    }
 }
 
 sub main {
     my ($task, $single, $config, $pm, $forks) = @_;
 
     $pm->is_parent or return;
-    $pm->reap_finished_children;
+    # Додаємо обробку помилок для reap_finished_children
+    eval { $pm->reap_finished_children; };
+    tolog "Error reaping children: $@" if $@;
     $step++;
     tolog("STEP $step START! PID [$$] with running kids: ".scalar %{$forks});
     my @pids = $pm->running_procs;
     if (scalar @pids) {
         for my $pid ($pm->running_procs) {
-            if ($forks->{$pid}{'time'} + ($period * 120) < time) {
-                kill 'KILL', $pid;
+            my $elapsed = time - $forks->{$pid}{'time'};
+            my $timeout = $forks->{$pid}{'timeout'} || ($config->{period} * 2);
+
+            if ($elapsed > $timeout) {
+                debug "Process $pid timeout after ${elapsed}s (limit: ${timeout}s), terminating...";
+                # Спочатку TERM, потім KILL
+                if (kill('TERM', $pid)) {
+                    sleep 3; # Даємо більше часу для graceful shutdown
+                    if (kill(0, $pid)) { # Перевіряємо чи процес ще живий
+                        debug "Process $pid still alive, sending KILL";
+                        kill 'KILL', $pid;
+                    }
+                }
+                delete $forks->{$pid};
             }
         }
     } else {
@@ -75,82 +127,170 @@ sub main {
     }
 
     Db->connect;
-    my $db = Db->sql("SELECT * FROM `pon_olt` WHERE `enable` = 1");
-    my $rows = $db->rows || 0;
-    if (!$rows) {
-        tolog( "ERROR: DB \t===> No OLT in DB!!!" );
-        sleep 60;
-        return 0;
-    }
 
-    $pm->set_max_procs($rows*2);
+    #$pm->set_max_procs($rows*2) if int($config->{max_procs});
+    #$pm->set_max_procs(`getconf _NPROCESSORS_ONLN`);
+    #$pm->set_max_procs(0) if ($single && $cfg::verbose);
+
     $pm->run_on_finish(
         sub {
             my ($pid, $exit_code, $ident) = @_;
             delete $forks->{$pid};
-            debug "** $ident just got out of the pool with PID $pid and exit code: $exit_code";
+            my $signal = $exit_code & 127;
+            my $core_dump = $exit_code & 128;
+            my $real_exit = $exit_code >> 8;
+
+            if ($signal) {
+                debug "** Process $pid (OLT: $ident->{name}) killed by signal $signal" . ($core_dump ? " with core dump" : "");
+            } elsif ($real_exit) {
+                debug "** Process $pid (OLT: $ident->{name}) exited with code $real_exit";
+            } else {
+                debug "** Process $pid (OLT: $ident->{name}) completed successfully";
+            }
         }
     );
 
     $pm->run_on_start(
         sub {
-            my ($pid, $ident)=@_;
+            my ($pid, $olt)=@_;
+            #debug 'pre', $olt;
             $forks->{$pid}{'time'} = time;
             $forks->{$pid}{'step'} = $step;
-            debug "** $ident started, pid: $pid";
+            $forks->{$pid}{'timeout'} = defined $olt->{cfg}{proc_fork_timeout} ? $olt->{cfg}{proc_fork_timeout} : 720;
+            debug "** $olt->{name} started, pid: $pid";
         }
     );
 
-    &_sort_history();
+    my $db = Db->sql("SELECT * FROM `pon_olt` WHERE `enable` = 1");
+    my $rows = $db->rows || 0;
+    if (!$rows) {
+        debug("WARNING: Can't find enabled OLTs!!!");
+        sleep 30;
+    }
 
     WORK:
     while (my %p = $db->line) {
         $p{cfg}            = Debug->do_eval(delete $p{param}) || {};
         $p{debug}          = $cfg::verbose == 2 ? 1 : 0;
         $p{cfg}{snmp_port} = $p{cfg}{snmp_port} || $p{snmp_port} || 161;
+        $p{cfg}{proc_single_sleep} //= 60;
 
-        # Forks and returns the pid for the child:
-        $pm->start and next WORK;
-
+        my $module = ucfirst(lc($p{vendor}));
+        if (my $err = _load_module($module)) {
+            tolog("ERROR: OLT id $p{id} ===>\t $err");
+            next;
+        }
+        my $pkg = "nod::Pon::$module";
+        next if !$pkg->can('new');
+        my $olt = $pkg->new({%p});
+        my $timeout = defined $p{cfg}{proc_fork_timeout} ? $p{cfg}{proc_fork_timeout} : 720;
         sleep 2;
-        $0 = "nodeny::".__PACKAGE__;
-        &init_pon({olt=>\%p, step=>$step, timeout=>480});
-        $pm->finish; # Terminates the child process
+        # Forks and returns the pid for the child:
+        $pm->start(\%p) and next WORK;
+        &init_pon({olt=>$olt, step=>$step, config=>$config, timeout=>$timeout*2});
+        $pm->finish(\%p); # Terminates the child process
     }
+    while ($pm->running_procs) {
+        eval { $pm->reap_finished_children; };
+        tolog "Error reaping children in cleanup: $@" if $@;
+        for my $pid ($pm->running_procs) {
+            if (defined $forks->{$pid} && $forks->{$pid}) {
+                my $elapsed = time - $forks->{$pid}{'time'};
+                my $timeout = $forks->{$pid}{'timeout'} * 2;
+
+                if ($elapsed > $timeout) {
+                    debug "Cleanup: Process $pid timeout after ${elapsed}s, killing...";
+                    kill 'TERM', $pid;
+                    sleep 2;
+                    kill 'KILL', $pid if kill(0, $pid);
+                    delete $forks->{$pid};
+                } else {
+                    debug "Cleanup: waiting for process $pid (${elapsed}s/${timeout}s)";
+                    sleep 2;
+                }
+            } else {
+                debug "Cleanup: orphaned process $pid, killing...";
+                kill 'KILL', $pid;
+            }
+        }
+    }
+    debug "DONE";
+}
+
+sub single {
+    my ($task, $single, $config) = @_;
+    $step++;
+    my $db = Db->sql("SELECT * FROM `pon_olt` WHERE `id` = ?", $config->{single_olt});
+    my $rows = $db->rows || 0;
+    if (!$rows) {
+        tolog("ERROR: DB \t===> No OLT in DB!!!");
+        sleep 30;
+        exit;
+    }
+    my $sleep = 0;
+    while (my %p = $db->line) {
+        if ($p{enable} != 2) {
+            debug "OLT id $p{id} not in single mode or disabled";
+            $sleep = 30;
+            last;
+        }
+        $p{cfg}            = Debug->do_eval(delete $p{param}) || {};
+        $p{debug}          = $cfg::verbose == 2 ? 1 : 0;
+        $p{cfg}{snmp_port} = $p{cfg}{snmp_port} || $p{snmp_port} || 161;
+        $p{cfg}{proc_single_sleep} //= 60;
+
+        my $module = ucfirst(lc($p{vendor}));
+        if (my $err = _load_module($module)) {
+            tolog("ERROR: OLT id $p{id} ===>\t $err");
+            $sleep = 30;
+            next;
+        }
+        my $pkg = "nod::Pon::$module";
+        next if !$pkg->can('new');
+        # next if !$pkg->can('unregistered');
+        my $olt = $pkg->new({%p});
+        $sleep = $p{cfg}{proc_single_sleep};
+        &init_pon({olt=>$olt, step=>$step, config=>$config, timeout=>0});
+    }
+    debug "DONE";
+    debug "Cicle sleep $sleep seconds";
+    sleep $sleep;
 }
 
 sub init_pon {
     my $work = shift;
-    $0 = "nodeny::".__PACKAGE__;
-    local $SIG{ALRM} = sub {
-        local $SIG{TERM} = 'IGNORE';
-        kill TERM => -$$;
-        die "CHILD PID [$$] [$0] DIE BY TIMEOUT!\n";
-    };
-    #local $SIG{ALRM} = sub {  die "CHILD PID [$$] [$0] DIE BY TIMEOUT!"};
-    alarm($work->{timeout});
-    $0 = "nodeny::".__PACKAGE__;
     my $olt = $work->{olt};
-
-    Db->connect;
-    debug 'pre', $olt;
+    my $config = $work->{config};
+    $0 = $config->{proc_name}.__PACKAGE__."::".$olt->{id};
+    if (!$config->{single_olt}) {
+        local $SIG{ALRM} = sub {
+            local $SIG{TERM} = 'IGNORE';
+            kill TERM => -$$;
+            tolog "CHILD PID [$$] [$0] DIE BY TIMEOUT!\n";
+            die "CHILD PID [$$] [$0] DIE BY TIMEOUT!\n";
+        };
+        #local $SIG{ALRM} = sub {  die "CHILD PID [$$] [$0] DIE BY TIMEOUT!"};
+        alarm($work->{timeout}) if $work->{timeout};
+        Db->connect;
+    }
     my $step = $work->{step};
     $olt->{step} = $work->{step};
 
     debug("STEP->$step; OLT id $olt->{id} : START");
-    my $module = ucfirst(lc($olt->{vendor}));
-    if (my $err = _load_module($module)) {
-        tolog("ERROR: OLT id $olt->{id} ===>\t $err");
-        die;
+
+    eval {
+        my $olt_data = $olt->main($step);
+        _parse_olt_data($olt_data, $olt);
+        undef $olt_data;
+    };
+
+    if ($@) {
+        tolog("ERROR: OLT id $olt->{id} processing failed: $@");
+        exit(1); # Вихід з помилкою для дочірнього процесу
     }
 
-    my $pon = "nod::Pon::$module";
-
-    my $olt_data = $pon->main($olt, $step);
-    _parse_olt_data($olt_data, $olt);
-    undef $olt_data;
     debug("STEP->$step; OLT id $olt->{id} : FINISH");
-    return;
+    exit(0); # Нормальний вихід для дочірнього процесу
 }
 
 sub _load_module {
@@ -172,14 +312,22 @@ sub _parse_olt_data {
     my $olt = shift;
     my $olt_main;
     my $olt_id = $olt->{id};
+    my %v_ips = ();
+    my $daily_pon_tbl_name = '';
 
     if (defined $olt_data->{onu_list}) {
         $olt_main->{onu_list} = &_get_onu_list() || {};
         $olt_main->{onu_bind} = &_get_bind() || {};
+        my $t = localtime(time);
+        my ($day_now, $mon_now, $year_now) = ($t->mday, $t->mon, $t->year);
+        $daily_pon_tbl_name = sprintf $cfg::_tbl_name_template, $year_now+1900, $mon_now+1, $day_now;
+        $DB_graph->do("CREATE TABLE IF NOT EXISTS $daily_pon_tbl_name $cfg::_slq_create_zpon_table");
+        debug $daily_pon_tbl_name, "\n";
     }
 
     foreach my $sn (sort keys %{$olt_data->{onu_list}}) {
         my $new_onu = $olt_data->{onu_list}{$sn};
+        my $old_bind = {};
         # debug 'pre', $new_onu;
         $sn = uc($sn);
         if (!defined $olt_main->{onu_list}{$sn}) {
@@ -226,6 +374,19 @@ sub _parse_olt_data {
             }
             $sql_query =~ s/\,$//g;
             Db->do($sql_query.$sql_where, @sql_param, $sn, $olt_id, $new_onu->{LLID}) if scalar @sql_param;
+            $old_bind = $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}};
+        }
+        # TODO: Add $rough_lvl to olt:params
+        my $rough_lvl = 500;
+        if (
+          # TODO: Change $olt->{step} % 10 to diff time and add to olt:params
+          ($olt->{step} % 10) == 1 || !defined $olt_main->{onu_bind}{$sn}{$olt_id}{$new_onu->{LLID}}
+          || calc_rough($old_bind->{rx}, $new_onu->{ONU_RX_POWER}) > $rough_lvl
+          || calc_rough($old_bind->{tx}, $new_onu->{ONU_TX_POWER}) > $rough_lvl
+          # || sprintf("%.2f", $old_bind->{rx}) ne sprintf("%.2f", $new_onu->{ONU_RX_POWER})
+          # || sprintf("%.2f", $old_bind->{tx}) ne sprintf("%.2f", $new_onu->{ONU_TX_POWER})
+        ) {
+            $DB_graph->do("INSERT INTO $daily_pon_tbl_name SET `sn`=?, `rx`=?, `tx`=?, `time`=UNIX_TIMESTAMP()", $sn, $new_onu->{ONU_RX_POWER}, $new_onu->{ONU_TX_POWER});
         }
     }
 
@@ -249,6 +410,10 @@ sub _parse_olt_data {
             "SET f.uid=i.uid WHERE i.`auth` = 1 AND f.`olt_id` = ? AND i.`uid` > 0", $olt_id
         );
     }
+
+#<HOOK>add_parser
+
+
     undef $olt_data;
     return;
 }
@@ -280,6 +445,11 @@ sub _get_onu_list {
     return \%onu_list;
 }
 
+sub calc_rough {
+    my ($old, $new) = @_;
+    return abs(abs($old * 1000) - abs($new * 1000));
+}
+
 sub hash_merge {
     my ($left, $right) = (shift, shift);
     foreach my $key (keys %$right) {
@@ -293,24 +463,6 @@ sub hash_merge {
         #debug 'pre', $left;
     }
     return $left;
-}
-
-sub _sort_history {
-    #my $sql = Db->sql("SELECT * FROM pon_mon WHERE time < UNIX_TIMESTAMP(CONCAT(CURDATE(), ' 00:00:00'))-1 ORDER BY time ASC" );
-    my $sql = Db->sql("SELECT * FROM pon_mon ORDER BY time ASC" );
-    my $oldtblname = '';
-    while (my %p = $sql->line) {
-         my $t = localtime($p{time});
-         my ($day_now, $mon_now, $year_now) = ($t->mday, $t->mon, $t->year);
-         my $traf_tbl_name = sprintf $cfg::_tbl_name_template, $year_now+1900, $mon_now+1, $day_now;
-         debug $traf_tbl_name, "\n";
-         if ($traf_tbl_name ne $oldtblname) {
-             Db->do("CREATE TABLE IF NOT EXISTS $traf_tbl_name $cfg::_slq_create_zpon_table");
-             $oldtblname = $traf_tbl_name;
-         }
-         Db->do("INSERT INTO $traf_tbl_name SET bid=?, tx=?, rx=?, time=?", $p{bid}, $p{tx}, $p{rx}, $p{time});
-         Db->do("DELETE FROM `pon_mon` WHERE bid=? and time=?", $p{bid}, $p{time});
-    }
 }
 
 1;

@@ -6,7 +6,7 @@
 # ------------------------------------------------------------
 # Info: PON monitor upgrade system
 # NoDeny revision: 715
-# Updated date: 2025.08.20
+# Updated date: 2025.09.01
 # ------------------------------------------------------------
 use strict;
 use FindBin;
@@ -92,6 +92,9 @@ sub lprint {
 my %param_new_names = (
     'single_sleep'     => 'proc_single_sleep',
     'fork_timeout'     => 'proc_fork_timeout',
+    'fdb_force_telnet' => 'telnet_fdb_force',
+    'fdb_cmd'          => 'telnet_fdb_cmd',
+    'telnet_enamod'    => 'telnet_enamode',
     'snmp_ro_comunity' => 'snmp_community_ro',
     'snmp_rw_comunity' => 'snmp_community_rw',
     'snmp_f'           => 'snmp_repeaters',
@@ -200,6 +203,31 @@ if (lc($line) =~ /^y|yes\s*$/i) {
         Db->ok or db_error();
         lprint("[INFO] change `id` column to `int` in `pon_onu` table");
     }
+    if (exists $table_hash{user}) {
+        Db->do("ALTER TABLE `pon_bind` DROP `user`");
+        Db->ok or db_error();
+        lprint("[INFO] drop `user` column from `pon_bind` table");
+    }
+    if (exists $table_hash{place}) {
+        Db->do("ALTER TABLE `pon_bind` DROP `place`");
+        Db->ok or db_error();
+        lprint("[INFO] drop `place` column from `pon_bind` table");
+    }
+    if (exists $table_hash{dereg}) {
+        Db->do("ALTER TABLE `pon_bind` DROP `dereg`");
+        Db->ok or db_error();
+        lprint("[INFO] drop `dereg` column from `pon_bind` table");
+    }
+    if (exists $table_hash{tx} && $table_hash{tx}{type} !~ /^decimal/i) {
+        Db->do("ALTER TABLE `pon_bind` CHANGE `tx` `tx` DECIMAL(6,3) NOT NULL DEFAULT '0.0'");
+        Db->ok or db_error();
+        lprint("[INFO] change `tx` column to `decimal(6,3)` in `pon_bind` table");
+    }
+    if (exists $table_hash{rx} && $table_hash{rx}{type} !~ /^decimal/i) {
+        Db->do("ALTER TABLE `pon_bind` CHANGE `rx` `rx` DECIMAL(6,3) NOT NULL DEFAULT '0.0'");
+        Db->ok or db_error();
+        lprint("[INFO] change `rx` column to `decimal(6,3)` in `pon_bind` table");
+    }
 }
 
 {
@@ -221,6 +249,71 @@ if (lc($line) =~ /^y|yes\s*$/i) {
         Db->do("ALTER TABLE `pon_onu` ADD `place` int NOT NULL DEFAULT '0' AFTER `place_type`, ADD KEY `place` (`place`)");
         Db->ok or db_error();
         lprint("[INFO] add `place` column to `pon_onu` table");
+    }
+}
+
+{
+    # graph_log tables
+    my $DB_graph = Db->self;
+    if ($cfg::ponmon_db_name) {
+        my $timeout = $cfg::ponmon_db_timeout || 10;
+        my $db = Db->new(
+            host    => $cfg::ponmon_db_host,
+            user    => $cfg::ponmon_db_login,
+            pass    => $cfg::ponmon_db_password,
+            db      => $cfg::ponmon_db_name,
+            timeout => $timeout,
+            tries   => 3,
+            global  => 0,
+            pool    => [],
+        );
+        $db->connect;
+        $DB_graph = $db if $db->is_connected;
+    }
+    my $dbh = $DB_graph->dbh;
+    my $sth = $dbh->prepare("SHOW TABLES LIKE 'z20%_%_pon'");
+    unless ($sth->execute) {
+        debug 'error', 'Failed to execute sql: SHOW TABLES';
+        last;
+    }
+    while (my $p = $sth->fetchrow_arrayref) {
+        my $graph_table = $p->[0];
+        $graph_table =~ /^Z(\d\d\d\d)_(\d+)_(\d+)_pon$/i or next;
+        my %table_hash = %{get_table_info($graph_table)};
+        next if !scalar keys %table_hash;
+        # debug('pre', \%table_hash);
+        unless (exists $table_hash{id}) {
+            Db->do("ALTER TABLE `$graph_table` ADD `id` INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, ADD PRIMARY KEY (`id`)");
+            Db->ok or db_error();
+            lprint("[INFO] add `id` column to `$graph_table` table");
+            $table_hash{id} = {
+                name => 'id',
+                type => 'int',
+                nullable => 0,
+                default => 0,
+                size => 10,
+            };
+        }
+        unless (exists $table_hash{sn}) {
+            Db->do("ALTER TABLE `$graph_table` ADD `sn` VARCHAR(20) DEFAULT '' AFTER `id`");
+            Db->ok or db_error();
+            lprint("[INFO] add `sn` column to `$graph_table` table");
+            $table_hash{sn} = {
+                name => 'sn',
+                type => 'varchar',
+                nullable => 0,
+                default => '',
+                size => 20,
+            };
+        }
+        if (exists $table_hash{bid} && exists $table_hash{sn}) {
+            Db->do("UPDATE `$graph_table` t INNER JOIN `pon_bind` p ON t.bid = p.id SET t.sn = IFNULL(p.sn, '')");
+            Db->do("DELETE FROM `$graph_table` WHERE sn = '' OR sn IS NULL");
+            Db->do("ALTER TABLE `$graph_table` DROP `bid`");
+            Db->ok or db_error();
+            delete $table_hash{bid};
+            lprint("[INFO] drop `bid` column from `$graph_table` table");
+        }
     }
 }
 
@@ -290,27 +383,34 @@ sub templates2param {
             $settings{$key} = $val;
         }
 
+        my $changes = 0;
         foreach my $key (keys %param_new_names) {
             if (exists $settings{$key} && !exists $settings{$param_new_names{$key}}) {
-                $settings{$param_new_names{$key}} = $settings{$key};
+                $settings{$param_new_names{$key}} = delete $settings{$key};
                 lprint("[INFO] rename `{$key}` to `{$param_new_names{$key}}` in param from template `{$p{mng_tmpl}}`");
+                $changes++;
             }
         }
         if (!exists $settings{snmp_community_ro} && defined $p{ro_comunity} && $p{ro_comunity}) {
             $settings{snmp_community_ro} = $p{ro_comunity};
+            $changes++;
             lprint("[INFO] rename `ro_comunity` to `snmp_community_ro` in param from template `{$p{mng_tmpl}}`");
         }
         if (!exists $settings{snmp_community_rw} && defined $p{rw_comunity} && $p{rw_comunity}) {
+            $changes++;
             $settings{snmp_community_rw} = $p{rw_comunity};
             lprint("[INFO] rename `rw_comunity` to `snmp_community_rw` in param from template `{$p{mng_tmpl}}`");
         }
         my $param = Debug->dump(\%settings);
-        Db->do("UPDATE `pon_olt` SET `param`=?, `changed`=UNIX_TIMESTAMP() WHERE `id`=?", $param, $p{'id'});
-        Db->ok or db_error();
-        if ($p{mng_tmpl}) {
+
+        if ($p{mng_tmpl} && $changes) {
+            Db->do("UPDATE `pon_olt` SET `param`=?, `changed`=UNIX_TIMESTAMP() WHERE `id`=?", $param, $p{'id'});
+            Db->ok or db_error();
             Db->do("UPDATE `pon_olt` SET `mng_tmpl`=0 WHERE `id`=?", $p{'id'});
             lprint("[INFO] update `pon_olt` table with new param from template `{$p{mng_tmpl}}`");
-        } else {
+        }
+        if ($changes) {
+            Db->do("UPDATE `pon_olt` SET `param`=?, `changed`=UNIX_TIMESTAMP() WHERE `id`=?", $param, $p{'id'});
             lprint("[INFO] update `pon_olt` table with new param");
         }
     }

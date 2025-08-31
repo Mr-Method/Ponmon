@@ -6,7 +6,7 @@
 # ------------------------------------------------------------
 # Info: PON monitor ONU info
 # NoDeny revision: 715
-# Updated date: 2025.08.20
+# Updated date: 2025.09.01
 # ------------------------------------------------------------
 use strict;
 
@@ -43,7 +43,7 @@ sub act_show {
         # debug 'error', $module;
         if (my $err = _load_module($module)) {
             tolog("ERROR: OLT id $p{id} ===>\t $err");
-            last;
+            return;
         }
         my $pkg = "nod::Pon::$module";
         return if !$pkg->can('new');

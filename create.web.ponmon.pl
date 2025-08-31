@@ -6,7 +6,7 @@
 # ------------------------------------------------------------
 # Info: PON monitor web interface
 # NoDeny revision: 715
-# Updated date: 2025.08.20
+# Updated date: 2025.09.01
 # ------------------------------------------------------------
 use strict;
 use Debug;
@@ -224,7 +224,7 @@ sub pon_edit {
 
     Doc->template('top_block')->{title} = _('PON Monitor::SHOW OLT: [bold]: ONU: [bold]', $pon{olt}{$p{olt_id}}{name}, $p{sn}) if $p{id};
 
-    my $graf_dates = Get_list_of_stat_days('Z', $url, $Ftm_stat);
+    my $graf_dates = Get_list_of_stat_days('Z', $url, $Ftm_stat, $p{sn});
     Doc->template('base')->{document_ready} .= "\$.getScript('".$cfg::img_dir."/custom/highcharts.12.js')"  if $graf_dates;
     Doc->template('base')->{top_lines} .= WideBox(
         title => L('Графіки'),
@@ -267,9 +267,27 @@ sub pon_del {
 }
 
 sub Get_list_of_stat_days {
-    my ($tbl_type, $url, $sel_time) = @_;
+    my ($tbl_type, $url, $sel_time, $sn) = @_;
 
-    my $dbh = Db->dbh;
+    my $DB;
+    if ($cfg::ponmon_db_name) {
+        my $timeout = $cfg::ponmon_db_timeout || 10;
+        my $db = Db->new(
+            host    => $cfg::ponmon_db_host,
+            user    => $cfg::ponmon_db_login,
+            pass    => $cfg::ponmon_db_password,
+            db      => $cfg::ponmon_db_name,
+            timeout => $timeout,
+            tries   => 2,
+            global  => 0,
+            pool    => [],
+        );
+        $db->connect;
+        $DB = $db if $db->is_connected;
+    }
+    $DB = Db->self unless $DB;
+
+    my $dbh = $DB->dbh;
     my $sth = $dbh->prepare('SHOW TABLES');
     $sth->execute or return '';
     my $t = localtime(int $sel_time);
@@ -298,7 +316,7 @@ sub Get_list_of_stat_days {
             $i++;
             $dates{$i}{month} = $lang::month_names[$mon+1].' '.($year+1900).':';
         }
-        $dates{$i}{days} .= url->a($day, a=>'ajOnuGraph', bid=>ses::input_int('bid'), tm_stat=>$time, -ajax=>1).'&nbsp;';
+        $dates{$i}{days} .= url->a($day, a=>'ajOnuGraph', sn=>$sn, tm_stat=>$time, -ajax=>1).'&nbsp;';
     }
     foreach my $month (sort keys %dates) {
         $list_of_days .= _('[dt]', $dates{$month}{month} ."\t". $dates{$month}{days});

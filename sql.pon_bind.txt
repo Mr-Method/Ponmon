@@ -4,11 +4,13 @@ CREATE TABLE IF NOT EXISTS `pon_bind` (
   `olt_id` smallint NOT NULL,
   `llid` char(16) NOT NULL,
   `name` char(32) NOT NULL DEFAULT '',
-  `tx` char(6) DEFAULT NULL,
-  `rx` char(6) DEFAULT NULL,
+  `tx` decimal(6,3) NOT NULL DEFAULT '0.000',
+  `rx` decimal(6,3) NOT NULL DEFAULT '0.000',
   `status` char(30) DEFAULT NULL,
-  `dereg` char(24) DEFAULT NULL,
   `changed` int NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uniq` (`olt_id`,`llid`) USING BTREE
+  UNIQUE KEY `uniq` (`olt_id`,`llid`) USING BTREE,
+  KEY `sn` (`sn`),
+  KEY `status` (`status`),
+  KEY `changed` (`changed`)
 ) ENGINE=InnoDB COMMENT='ONU binds';

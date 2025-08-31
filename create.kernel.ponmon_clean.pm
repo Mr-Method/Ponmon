@@ -6,7 +6,7 @@
 # ------------------------------------------------------------
 # Info: PON monitor kernel clean
 # NoDeny revision: 715
-# Updated date: 2025.08.20
+# Updated date: 2025.09.01
 # ------------------------------------------------------------
 package kernel::ponmon_clean;
 use strict;
@@ -34,7 +34,23 @@ sub start {
 sub clean {
     my ($task, $single, $config) = @_;
 
-    my $DB_graph = Db->self;
+    my $DB_graph;
+    if ($cfg::ponmon_db_name) {
+        my $timeout = $cfg::ponmon_db_timeout || 10;
+        my $db = Db->new(
+            host    => $cfg::ponmon_db_host,
+            user    => $cfg::ponmon_db_login,
+            pass    => $cfg::ponmon_db_password,
+            db      => $cfg::ponmon_db_name,
+            timeout => $timeout,
+            tries   => 3,
+            global  => 0,
+            pool    => [],
+        );
+        $db->connect;
+        $DB_graph = $db if $db->is_connected;
+    }
+    $DB_graph = Db->self unless $DB_graph;
 
     if (!!$cfg::ponmon_web_user_sn_field && !!$cfg::ponmon_web_user_sn_copy) {
         eval {

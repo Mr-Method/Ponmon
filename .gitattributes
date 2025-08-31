@@ -1,3 +1,4 @@
+# Denote all files that are truly text and should be normalized (e.g. Unix-style line endings).
 * text=auto eol=lf
 
 *.sql text eol=lf

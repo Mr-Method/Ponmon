@@ -1,7 +1,0 @@
-CREATE TABLE IF NOT EXISTS `pon_mon` (
-  `bid` mediumint(7) NOT NULL,
-  `tx` char(6) DEFAULT NULL,
-  `rx` char(6) DEFAULT NULL,
-  `time` int(11) NOT NULL DEFAULT '0',
-  KEY `time` (`time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='ONU monitoring';
