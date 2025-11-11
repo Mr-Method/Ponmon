@@ -5,8 +5,8 @@
 # https://t.me/MrMethod
 # ------------------------------------------------------------
 # Info: PON monitor user ONU
-# NoDeny revision: 715
-# Updated date: 2025.09.01
+# NoDeny: rev. 718
+# Update: 2025.11.01
 # ------------------------------------------------------------
 use strict;
 

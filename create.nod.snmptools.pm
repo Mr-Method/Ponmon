@@ -1,12 +1,12 @@
 #<ACTION> file=>'nod/snmptools.pm',hook=>'new'
 # -------------------------- NoDeny --------------------------
-# Created by Redmen for NoDeny Next (https://nodeny.com.ua)
+# Created by Redmen for NoDeny (https://nodeny.com.ua)
 # https://forum.nodeny.com.ua/index.php?action=profile;u=1139
 # https://t.me/MrMethod
 # ------------------------------------------------------------
 # Info: SNMP tools for PON monitoring
-# NoDeny revision: 715
-# Updated date: 2025.09.01
+# NoDeny: rev. 718
+# Update: 2025.11.01
 # ------------------------------------------------------------
 package nod::snmptools;
 use strict;
@@ -19,11 +19,11 @@ sub new {
     my ($class, $olt) = @_;
     my $obj = {};
     $obj->{host}      = $olt->{ip};
-    $obj->{port}      = $olt->{cfg}{snmp_port}      || 161;
-    $obj->{version}   = $olt->{cfg}{snmp_version}   || '2c';
-    $obj->{timeout}   = $olt->{cfg}{snmp_timeout}   || 10;
-    $obj->{retries}   = $olt->{cfg}{snmp_retries}   || 10;
-    $obj->{repeaters} = $olt->{cfg}{snmp_repeaters} || 32;
+    $obj->{port}      = int($olt->{cfg}{snmp_port} // 161);
+    $obj->{version}   = $olt->{cfg}{snmp_version} // '2c';
+    $obj->{timeout}   = int($olt->{cfg}{snmp_timeout} // 10);
+    $obj->{retries}   = int($olt->{cfg}{snmp_retries} // 10);
+    $obj->{repeaters} = int($olt->{cfg}{snmp_repeaters} // 0);
 
     $obj->{community_ro} = $olt->{cfg}{snmp_community_ro} || 'public';
     $obj->{community_rw} = $olt->{cfg}{snmp_community_rw} || 'private';
@@ -79,8 +79,16 @@ sub walk {
     foreach my $oid (keys %{$oids}) {
         #debug "$oid => $oids->{$oid}\n";
         my @output = ();
-        debug "snmpbulkwalk -r $self->{retries} -t $self->{timeout} -v $self->{version} -On -Oe -c $self->{community_ro} $self->{host}:$self->{port} $oids->{$oid}";
-        @output = `snmpbulkwalk -r $self->{retries} -t $self->{timeout} -v $self->{version} -On -Oe -c $self->{community_ro} $self->{host}:$self->{port} $oids->{$oid} 2>/dev/null`;
+        if (int($self->{repeaters}) == 1) {
+            debug "snmpbulkwalk -On -Oe -r $self->{retries} -t $self->{timeout} -v $self->{version} -c $self->{community_ro} $self->{host}:$self->{port} $oids->{$oid}";
+            @output = `snmpbulkwalk -On -Oe -r $self->{retries} -t $self->{timeout} -v $self->{version} -c $self->{community_ro} $self->{host}:$self->{port} $oids->{$oid} 2>/dev/null`;
+        } elsif (int($self->{repeaters}) > 1) {
+            debug "snmpbulkwalk -On -Oe -Cn1 -Cr$self->{repeaters} -r $self->{retries} -t $self->{timeout} -v $self->{version} -c $self->{community_ro} $self->{host}:$self->{port} $oids->{$oid}";
+            @output = `snmpbulkwalk -On -Oe -Cn1 -Cr$self->{repeaters} -r $self->{retries} -t $self->{timeout} -v $self->{version} -c $self->{community_ro} $self->{host}:$self->{port} $oids->{$oid} 2>/dev/null`;
+        } else {
+            debug "snmpwalk -On -Oe -r $self->{retries} -t $self->{timeout} -v $self->{version} -c $self->{community_ro} $self->{host}:$self->{port} $oids->{$oid}";
+            @output = `snmpwalk -On -Oe -r $self->{retries} -t $self->{timeout} -v $self->{version} -c $self->{community_ro} $self->{host}:$self->{port} $oids->{$oid} 2>/dev/null`;
+        }
         $resp{$oid} = to_hash($oids->{$oid}, \@output);
     }
 #    debug 'pre', \%resp;

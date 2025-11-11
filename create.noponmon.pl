@@ -1,13 +1,13 @@
 #<ACTION> file=>'noponmon.pl',hook=>'new'
 #!/usr/bin/perl
 # -------------------------- NoDeny --------------------------
-# Created by Redmen for NoDeny Next (https://nodeny.com.ua)
+# Created by Redmen for NoDeny (https://nodeny.com.ua)
 # https://forum.nodeny.com.ua/index.php?action=profile;u=1139
 # https://t.me/MrMethod
 # ------------------------------------------------------------
 # Info: PonMon single OLT kernel handler
-# NoDeny revision: 715
-# Updated date: 2025.09.01
+# NoDeny: rev. 718
+# Update: 2025.11.01
 # ------------------------------------------------------------
 package kernel;
 use strict;

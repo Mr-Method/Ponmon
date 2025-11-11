@@ -5,8 +5,8 @@
 # https://t.me/MrMethod
 # ------------------------------------------------------------
 # Info: PON monitor OLT management
-# NoDeny revision: 715
-# Updated date: 2025.09.01
+# NoDeny: rev. 718
+# Update: 2025.11.01
 # ------------------------------------------------------------
 # https://jsfiddle.net/mrMethod/k9paur0q/10
 package op;

@@ -5,8 +5,8 @@
 # https://t.me/MrMethod
 # ------------------------------------------------------------
 # Info: PON monitor FDB
-# NoDeny revision: 715
-# Updated date: 2025.08.20
+# NoDeny: rev. 718
+# Update: 2025.11.01
 # ------------------------------------------------------------
 use strict;
 

@@ -5,8 +5,8 @@
 # https://t.me/MrMethod
 # ------------------------------------------------------------
 # Info: PON monitor kernel clean
-# NoDeny revision: 715
-# Updated date: 2025.09.01
+# NoDeny: rev. 718
+# Update: 2025.11.01
 # ------------------------------------------------------------
 package kernel::ponmon_clean;
 use strict;

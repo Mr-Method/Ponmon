@@ -9,10 +9,8 @@
 Модуль моніторингу PON обладнання для білінгової системи [NoDeny Next](https://nodeny.com.ua/).
 
 > [!CAUTION]
-> На момент написання документації даний модуль інтегрований в комплект поставки NoDeny Next ( ревізія 715 ), і встановлювати цю версію не можна (вона не встановиться, ще й може пошкодити існуючу БД).
-
-> [!WARNING]  
-> Для встановлення даної версії модуля, потрібно використовувати майбутню ревізію NoDeny Next (повідомлю тут і на форуміпісля виходу).
+> Починаючи з ревізії 716 NoDeny Next (2025.09.11), даний модуль більше не входить в комплект поставки NoDeny Next, і розпосюджується окремо.
+> З 2025.09.11 модуль можна встановлювати як на гілку NoDeny Next, так і на гілку NoDeny Next Plus, використовуючи версію модуля з v2025.09.01!
 
 ## Огляд
 
@@ -31,16 +29,43 @@ Ponmon - це комплексний модуль для моніторингу 
   - C220 (GPON/EPON)
   - C300 (GPON/EPON)
   - C320 (GPON/EPON)
+  - C600 (GPON/EPON)
+  - C610 (GPON/EPON)
+  - C620 (GPON/EPON)
+  - C650 (GPON/EPON)
+
 - BDCOM
   - P3310B (EPON)
   - P3310C (EPON)
   - P3310D (EPON)
-  - P3608 (GPON)
-  - P3616-2TE (GPON)
+  - P3608B (EPON)
+  - P3616-2TE (EPON)
+  - GP3600-04 (GPON)
+  - GP3600-08 (GPON)
+  - GP3600-16B (GPON)
+
 - STELS/C-DATA
-  - Stels FD1108SN (EPON)
+  - серія FD11xx (EPON)
+    - FD1104SN
+    - FD1104SN-R1
+    - FD1104SN-R1-DAP
+    - FD1104SN-R2
+    - FD1108S
+    - FD1108SN
+    - FD1108S-R1-DAP
+  - серія FD12xx (EPON)
+    - FD1204
+    - FD1204SN-R1
+    - FD1204SN-R2
+    - FD1208S-R2-DAP
+    - FD1216S-B1
+  - серія FD16xx (GPON)
+    - FD1616SN-R1
 - V-Solutions
   - V1600D8 (EPON)
+
+> [!IMPORTANT]
+> Якщо вашої моделі немає в списку, але вона успішно моніториться модулем, будь ласка, зв'яжіться зі мною для додавання в список.
 
 ## Термінологія
 - OLT (Optical Line Terminal) - це оптичний термінал, який забезпечує з'єднання через оптичне волокно до ONU.
@@ -64,7 +89,8 @@ Ponmon - це комплексний модуль для моніторингу 
 ### Завантаження
 
 Завантажити модуль вручну:
-- з репозиторію [https://github.com/Mr-Method/Ponmon/releases](https://github.com/Mr-Method/Ponmon/releases)
+- з репозиторію [https://github.com/Mr-Method/Ponmon](https://github.com/Mr-Method/Ponmon)
+- з [кабінету](https://app.nodeny-plus.com.ua/cgi-bin/stat.pl)
 
 Завантажений архів розпакуйте в директорію `/usr/local/nodeny/modules/Ponmon`.
 
@@ -139,4 +165,40 @@ perl nokrnel.pl -m=ponmon -vv
 
 # Запуск в режимі демона
 perl nokrnel.pl -m=ponmon -d &
+```
+
+> [!TIP]
+> Починаючи з версії 2025.09.01 (виправлено в v2025.11.01), модуль можна запускати окремим процесом для кожногї OLT окремо, використовуючи команду `perl _noponmon.pl -o=1 -vv`. Для цього потрібно перемкнути запуск сканування OLT в режим "Самостійно", а в консолі виконати команду, наприклад для OLT з ID=1:
+```bash
+# Запуск одноразово (для тестування)
+perl _noponmon.pl -o=1 -vv
+
+# Запуск в режимі демона
+perl _noponmon.pl -o=1 -d &
+```
+
+> [!NOTE]
+> Для зручності керування процесами моніторингу OLT в режимі самостійного запуску, я використовую менеджер процесів `supervisor`.
+
+Приклад конфігурації supervisor:
+```bash
+cat <<EOT > /etc/supervisor/conf.d/noponmon_1.conf
+[program:noponmon_1]
+environment=PATH="/usr/bin"
+directory=/usr/local/nodeny/
+command=perl _noponmon.pl -o=1 -d &
+autostart=true
+autorestart=true
+startretries=3
+#stderr_logfile=/var/log/nodeny/%(program_name)s.err.log
+#stdout_logfile=/var/log/nodeny/%(program_name)s.out.log
+EOT
+```
+
+Також можна об'єднати всі OLT в одну групу, для простішого керування:
+```bash
+cat <<EOT > /etc/supervisor/conf.d/_ponmon_group.conf
+[group:pon_mon]
+programs=noponmon_1, noponmon_2, noponmon_3, noponmon_4, noponmon_5
+EOT
 ```

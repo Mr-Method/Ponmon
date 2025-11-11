@@ -5,8 +5,8 @@
 # https://t.me/MrMethod
 # ------------------------------------------------------------
 # Info: PON monitor kernel
-# NoDeny revision: 715
-# Updated date: 2025.09.01
+# NoDeny: rev. 718
+# Update: 2025.11.01
 # ------------------------------------------------------------
 package kernel::ponmon;
 use strict;
@@ -286,10 +286,12 @@ sub init_pon {
 
     if ($@) {
         tolog("ERROR: OLT id $olt->{id} processing failed: $@");
+        return 1 if $config->{single_olt};
         exit(1); # Вихід з помилкою для дочірнього процесу
     }
 
     debug("STEP->$step; OLT id $olt->{id} : FINISH");
+    return 1 if $config->{single_olt};
     exit(0); # Нормальний вихід для дочірнього процесу
 }
 
@@ -297,9 +299,7 @@ sub _load_module {
     my($name) = shift;
     $name = ucfirst(lc($name));
     debug "$cfg::dir_home/nod/Pon/$name.pm";
-    if (grep { $_ eq "$cfg::dir_home/nod/Pon/_$name.pm" } values %INC || grep { $_ eq "$cfg::dir_home/nod/Pon/$name.pm" } values %INC) {
-        return;
-    }
+    return if grep { $_ eq "$cfg::dir_home/nod/Pon/_$name.pm" } values %INC || grep { $_ eq "$cfg::dir_home/nod/Pon/$name.pm" } values %INC;
     eval { require "$cfg::dir_home/nod/Pon/_$name.pm" };
     my $err = "$@";
     debug 'error', $err if $err && -e "$cfg::dir_home/nod/Pon/_$name.pm";
